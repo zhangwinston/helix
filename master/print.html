@@ -659,6 +659,9 @@ selection to the "func" <code>identifier</code>.</p>
 <blockquote>
 <p>💡 Mappings marked (<strong>TS</strong>) require a tree-sitter grammar for the file type.</p>
 </blockquote>
+<blockquote>
+<p>⚠️ Some terminals' default key mappings conflict with Helix's. If any of the mappings described on this page do not work as expected, check your terminal's mappings to ensure they do not conflict. See the (wiki)[https://github.com/helix-editor/helix/wiki/Terminal-Support] for known conflicts.</p>
+</blockquote>
 <h2 id="normal-mode"><a class="header" href="#normal-mode">Normal mode</a></h2>
 <p>Normal mode is the default mode when you launch helix. You can return to it from other modes by pressing the <code>Escape</code> key.</p>
 <h3 id="movement"><a class="header" href="#movement">Movement</a></h3>
@@ -1138,10 +1141,11 @@ you to selectively add search terms to your selections.</p>
 <tr><td><code>:redraw</code></td><td>Clear and re-render the whole UI</td></tr>
 <tr><td><code>:move</code></td><td>Move the current buffer and its corresponding file to a different path</td></tr>
 <tr><td><code>:yank-diagnostic</code></td><td>Yank diagnostic(s) under primary cursor to register, or clipboard by default</td></tr>
+<tr><td><code>:read</code>, <code>:r</code></td><td>Load a file into buffer</td></tr>
 </tbody></table>
 </div><div style="break-before: page; page-break-before: always;"></div><h1 id="language-support"><a class="header" href="#language-support">Language Support</a></h1>
 <p>The following languages and Language Servers are supported. To use
-Language Server features, you must first <a href="https://github.com/helix-editor/helix/wiki/How-to-install-the-default-language-servers">install</a> the
+Language Server features, you must first <a href="https://github.com/helix-editor/helix/wiki/Language-Server-Configurations">configure</a> the
 appropriate Language Server.</p>
 <p>You can check the language support in your installed helix version with <code>hx --health</code>.</p>
 <p>Also see the <a href="./languages.html">Language Configuration</a> docs and the <a href="./guides/adding_languages.html">Adding
@@ -1269,6 +1273,7 @@ Languages</a> guide for more language configuration information.</p>
 <tr><td>mermaid</td><td>✓</td><td></td><td></td><td></td></tr>
 <tr><td>meson</td><td>✓</td><td></td><td>✓</td><td></td></tr>
 <tr><td>mint</td><td></td><td></td><td></td><td><code>mint</code></td></tr>
+<tr><td>move</td><td>✓</td><td></td><td></td><td></td></tr>
 <tr><td>msbuild</td><td>✓</td><td></td><td>✓</td><td></td></tr>
 <tr><td>nasm</td><td>✓</td><td>✓</td><td></td><td></td></tr>
 <tr><td>nickel</td><td>✓</td><td></td><td>✓</td><td><code>nls</code></td></tr>
@@ -1344,7 +1349,7 @@ Languages</a> guide for more language configuration information.</p>
 <tr><td>tsx</td><td>✓</td><td>✓</td><td>✓</td><td><code>typescript-language-server</code></td></tr>
 <tr><td>twig</td><td>✓</td><td></td><td></td><td></td></tr>
 <tr><td>typescript</td><td>✓</td><td>✓</td><td>✓</td><td><code>typescript-language-server</code></td></tr>
-<tr><td>typst</td><td>✓</td><td></td><td></td><td><code>typst-lsp</code></td></tr>
+<tr><td>typst</td><td>✓</td><td></td><td></td><td><code>tinymist</code>, <code>typst-lsp</code></td></tr>
 <tr><td>ungrammar</td><td>✓</td><td></td><td></td><td></td></tr>
 <tr><td>unison</td><td>✓</td><td></td><td>✓</td><td></td></tr>
 <tr><td>uxntal</td><td>✓</td><td></td><td></td><td></td></tr>
@@ -1362,6 +1367,7 @@ Languages</a> guide for more language configuration information.</p>
 <tr><td>wren</td><td>✓</td><td>✓</td><td>✓</td><td></td></tr>
 <tr><td>xit</td><td>✓</td><td></td><td></td><td></td></tr>
 <tr><td>xml</td><td>✓</td><td></td><td>✓</td><td></td></tr>
+<tr><td>xtc</td><td>✓</td><td></td><td></td><td></td></tr>
 <tr><td>yaml</td><td>✓</td><td></td><td>✓</td><td><code>yaml-language-server</code>, <code>ansible-language-server</code></td></tr>
 <tr><td>yuck</td><td>✓</td><td></td><td></td><td></td></tr>
 <tr><td>zig</td><td>✓</td><td>✓</td><td>✓</td><td><code>zls</code></td></tr>
