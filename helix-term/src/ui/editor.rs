@@ -1474,6 +1474,8 @@ impl Component for EditorView {
                     return EventResult::Ignored(None);
                 }
 
+                cx.editor.update_ime_state();
+
                 let config = cx.editor.config();
                 let mode = cx.editor.mode();
                 let (view, doc) = current!(cx.editor);

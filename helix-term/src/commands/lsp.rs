@@ -100,7 +100,7 @@ struct PickerDiagnostic {
     diag: lsp::Diagnostic,
 }
 
-fn location_to_file_location(location: &Location) -> Option<FileLocation> {
+fn location_to_file_location(location: &Location) -> Option<FileLocation<'_>> {
     let path = location.uri.as_path()?;
     let line = Some((
         location.range.start.line as usize,
@@ -589,7 +589,7 @@ struct CodeActionOrCommandItem {
 
 impl ui::menu::Item for CodeActionOrCommandItem {
     type Data = ();
-    fn format(&self, _data: &Self::Data) -> Row {
+    fn format(&self, _data: &Self::Data) -> Row<'_> {
         match &self.lsp_item {
             lsp::CodeActionOrCommand::CodeAction(action) => action.title.as_str().into(),
             lsp::CodeActionOrCommand::Command(command) => command.title.as_str().into(),

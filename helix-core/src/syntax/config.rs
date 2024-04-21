@@ -94,6 +94,11 @@ pub struct LanguageConfiguration {
     #[serde(default, skip_serializing, deserialize_with = "deserialize_auto_pairs")]
     pub auto_pairs: Option<AutoPairs>,
 
+    #[serde(default)]
+    pub auto_ime_allscopes: bool,
+    #[serde(default)]
+    pub auto_ime_scopes: Vec<String>,
+
     pub rulers: Option<Vec<u16>>, // if set, override editor's rulers
 
     /// Hardcoded LSP root directories relative to the workspace root, like `examples` or `tools/fuzz`.
