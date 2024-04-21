@@ -2,7 +2,7 @@ use helix_core::{ChangeSet, Rope};
 use helix_event::events;
 use helix_lsp::LanguageServerId;
 
-use crate::{editor::Config, Document, DocumentId, Editor, ViewId};
+use crate::{editor::Config, Document, DocumentId, Editor, ViewId, document::Mode};
 
 events! {
     DocumentDidOpen<'a> {
@@ -22,6 +22,7 @@ events! {
     }
     SelectionDidChange<'a> { doc: &'a mut Document, view: ViewId }
     DiagnosticsDidChange<'a> { editor: &'a mut Editor, doc: DocumentId }
+    ModeSwitch<'a> { old_mode: Mode, new_mode: Mode, editor: &'a mut Editor }
     // called **after** a document loses focus (but not when its closed)
     DocumentFocusLost<'a> { editor: &'a mut Editor, doc: DocumentId }
 

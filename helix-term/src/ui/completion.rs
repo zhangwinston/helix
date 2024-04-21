@@ -28,7 +28,7 @@ use std::cmp::Reverse;
 impl menu::Item for CompletionItem {
     type Data = Style;
 
-    fn format(&self, dir_style: &Self::Data) -> menu::Row {
+    fn format(&self, dir_style: &Self::Data) -> menu::Row<'_> {
         let deprecated = match self {
             CompletionItem::Lsp(LspCompletionItem { item, .. }) => {
                 item.deprecated.unwrap_or_default()

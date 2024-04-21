@@ -3002,7 +3002,7 @@ fn ensure_selections_forward(cx: &mut Context) {
 }
 
 fn enter_insert_mode(cx: &mut Context) {
-    cx.editor.mode = Mode::Insert;
+    cx.editor.set_mode(Mode::Insert);
 }
 
 // inserts at the start of each selection
@@ -3923,12 +3923,12 @@ fn select_mode(cx: &mut Context) {
     });
     doc.set_selection(view.id, selection);
 
-    cx.editor.mode = Mode::Select;
+    cx.editor.set_mode(Mode::Select);
 }
 
 fn exit_select_mode(cx: &mut Context) {
     if cx.editor.mode == Mode::Select {
-        cx.editor.mode = Mode::Normal;
+        cx.editor.set_mode(Mode::Normal);
     }
 }
 
@@ -4241,7 +4241,7 @@ pub mod insert {
                 _ => (),
             };
             // Restore the old mode.
-            cx.editor.mode = old_mode;
+            cx.editor.set_mode(old_mode);
         });
     }
 

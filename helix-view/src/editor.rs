@@ -15,6 +15,8 @@ use crate::{
     Document, DocumentId, View, ViewId,
 };
 use helix_event::dispatch;
+use crate::{ime, ime::ImeManager, events::ModeSwitch};
+
 use helix_vcs::DiffProviderRegistry;
 
 use futures_util::stream::select_all::SelectAll;
@@ -1094,9 +1096,11 @@ type Diagnostics = BTreeMap<Uri, Vec<(lsp::Diagnostic, DiagnosticProvider)>>;
 pub struct Editor {
     /// Current editing mode.
     pub mode: Mode,
+    pub ime_manager: Box<dyn ImeManager>, // ADDED: Made public
     pub tree: Tree,
     pub next_document_id: DocumentId,
     pub documents: BTreeMap<DocumentId, Document>,
+    pub ime_states: HashMap<ViewId, bool>, // ADDED: IME states per view
 
     // We Flatten<> to resolve the inner DocumentSavedEventFuture. For that we need a stream of streams, hence the Once<>.
     // https://stackoverflow.com/a/66875668
@@ -1242,11 +1246,15 @@ impl Editor {
         // HAXX: offset the render area height by 1 to account for prompt/commandline
         area.height -= 1;
 
+        let ime_manager = ime::new_ime_manager();
+
         Self {
             mode: Mode::Normal,
+            ime_manager,
             tree: Tree::new(area),
             next_document_id: DocumentId::default(),
             documents: BTreeMap::new(),
+            ime_states: HashMap::new(), // ADDED: Initialize ime_states
             saves: HashMap::new(),
             save_queue: SelectAll::new(),
             write_count: 0,
@@ -1860,6 +1868,7 @@ impl Editor {
         for doc in self.documents_mut() {
             doc.remove_view(id);
         }
+        self.ime_states.remove(&id); // ADDED: Remove IME state for the closed view
         self.tree.remove(id);
         self._refresh();
     }
@@ -1992,22 +2001,19 @@ impl Editor {
         // if leaving the view: mode should reset and the cursor should be
         // within view
         if prev_id != view_id {
-            self.enter_normal_mode();
-            self.ensure_cursor_in_view(view_id);
-
-            // Update jumplist selections with new document changes.
-            for (view, _focused) in self.tree.views_mut() {
-                let doc = doc_mut!(self, &view.doc);
-                view.sync_changes(doc);
+            // Save IME state for the view we are leaving
+            if self.mode == Mode::Insert {
+                let prev_ime_status = self.ime_manager.disable_and_get_status();
+                self.ime_states.insert(prev_id, prev_ime_status);
             }
-            let view = view!(self, view_id);
-            let doc = doc_mut!(self, &view.doc);
-            doc.mark_as_focused();
-            let focus_lost = self.tree.get(prev_id).doc;
-            dispatch(DocumentFocusLost {
-                editor: self,
-                doc: focus_lost,
-            });
+
+            // Restore IME state for the view we are entering
+            if self.mode == Mode::Insert {
+                let ime_status = self.ime_states.get(&view_id).copied();
+                self.ime_manager.enable_with_status(ime_status);
+            } else {
+                self.ime_manager.disable_and_get_status(); // Ensure IME is off in Normal mode
+            }
         }
     }
 
@@ -2233,35 +2239,66 @@ impl Editor {
         Ok(())
     }
 
-    /// Switches the editor into normal mode.
-    pub fn enter_normal_mode(&mut self) {
-        use helix_core::graphemes;
 
-        if self.mode == Mode::Normal {
+
+    pub fn enter_normal_mode(&mut self) {
+        self.set_mode(Mode::Normal);
+    }
+
+    pub fn set_mode(&mut self, new_mode: Mode) {
+        use helix_core::graphemes;
+        let view_id = self.tree.focus;
+        let old_mode = self.mode;
+        if old_mode == new_mode {
             return;
         }
 
-        self.mode = Mode::Normal;
-        let (view, doc) = current!(self);
+        self.mode = new_mode;
 
-        try_restore_indent(doc, view);
-
-        // if leaving append mode, move cursor back by 1
-        if doc.restore_cursor {
-            let text = doc.text().slice(..);
-            let selection = doc.selection(view.id).clone().transform(|range| {
-                let mut head = range.to();
-                if range.head > range.anchor {
-                    head = graphemes::prev_grapheme_boundary(text, head);
-                }
-
-                Range::new(range.from(), head)
-            });
-
-            doc.set_selection(view.id, selection);
-            doc.restore_cursor = false;
+        // Only change IME state if the mode is changing to or from Insert
+        if new_mode == Mode::Insert {
+            // Entering Insert mode, restore IME
+            let ime_status = self.ime_states.get(&view_id).copied();
+            self.ime_manager.enable_with_status(ime_status);
+        } else if old_mode == Mode::Insert {
+            // Leaving Insert mode (to any other mode), disable IME and save state
+            let prev_ime_status = self.ime_manager.disable_and_get_status();
+            self.ime_states.insert(view_id, prev_ime_status);
         }
+        // Perform other mode-specific actions
+        if new_mode == Mode::Normal {
+            let (view, doc) = current!(self);
+            try_restore_indent(doc, view);
+
+            // if leaving append mode, move cursor back by 1
+            if doc.restore_cursor {
+                let text = doc.text().slice(..);
+                let selection = doc.selection(view.id).clone().transform(|range| {
+                    let mut head = range.to();
+                    if range.head > range.anchor {
+                        head = graphemes::prev_grapheme_boundary(text, head);
+                    }
+
+                    Range::new(range.from(), head)
+                });
+        
+                doc.set_selection(view.id, selection);
+                doc.restore_cursor = false;
+            }
+
+            doc.append_changes_to_history(view);
+            doc.selections();
+            //doc.ensure_primary_selection_is_valid();
+            doc.reset_all_inlay_hints();            
+        }
+
+        helix_event::dispatch(ModeSwitch {
+            old_mode,
+            new_mode: self.mode,
+            editor: self,
+        });
     }
+
 
     pub fn current_stack_frame(&self) -> Option<&dap::StackFrame> {
         self.debug_adapters.current_stack_frame()
