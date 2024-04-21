@@ -236,6 +236,8 @@ impl Application {
 
         editor.set_theme(theme);
 
+        // editor.turn_off_ime();
+
         #[cfg(windows)]
         let signals = futures_util::stream::empty();
         #[cfg(not(windows))]

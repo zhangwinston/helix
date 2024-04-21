@@ -2857,6 +2857,11 @@ fn ensure_selections_forward(cx: &mut Context) {
 
 fn enter_insert_mode(cx: &mut Context) {
     cx.editor.mode = Mode::Insert;
+
+    let (_view, doc) = current!(cx.editor);
+    if doc.get_ime_status() {
+        cx.editor.ime_enable();
+    }
 }
 
 // inserts at the start of each selection
