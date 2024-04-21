@@ -55,6 +55,17 @@ use arc_swap::{
     ArcSwap,
 };
 
+use windows::Win32::Foundation::LRESULT;
+
+#[cfg(windows)]
+use windows::Win32::{
+    Foundation::{LPARAM, WPARAM},
+    UI::{
+        Input::Ime::{ImmGetDefaultIMEWnd, IMC_SETOPENSTATUS},
+        WindowsAndMessaging::{GetForegroundWindow, SendMessageA, WM_IME_CONTROL},
+    },
+};
+
 fn deserialize_duration_millis<'de, D>(deserializer: D) -> Result<Duration, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -2001,6 +2012,9 @@ impl Editor {
                     return EditorEvent::Redraw
                 }
                 _ = &mut self.idle_timer  => {
+                    if self.mode == Mode::Normal {
+                        self.ime_disable();
+                    }
                     return EditorEvent::IdleTimer
                 }
             }
@@ -2056,6 +2070,70 @@ impl Editor {
             doc.set_selection(view.id, selection);
             doc.restore_cursor = false;
         }
+        self.turn_off_ime();
+    }
+
+    pub fn turn_off_ime(&mut self) {
+        let ime_status = Self::ime_get_status();
+        let (_view, doc) = current!(self);
+        doc.set_ime_status(ime_status);
+        if ime_status {
+            self.ime_disable();
+        }
+
+        #[cfg(not(windows))]
+        self.ime_disable();
+    }
+
+    fn ime_get_status() -> bool {
+        #[cfg(windows)]
+        unsafe {
+            let fw = GetForegroundWindow();
+            let ime = ImmGetDefaultIMEWnd(fw);
+            let res = SendMessageA(ime, WM_IME_CONTROL, WPARAM(5usize), LPARAM(0));
+            if res == LRESULT(0isize) {
+                false
+            } else {
+                true
+            }
+        }
+
+        #[cfg(not(windows))]
+        return false;
+    }
+
+    pub fn ime_disable(&self) {
+        #[cfg(windows)]
+        unsafe {
+            let fw = GetForegroundWindow();
+            let ime = ImmGetDefaultIMEWnd(fw);
+            let _res = SendMessageA(
+                ime,
+                WM_IME_CONTROL,
+                WPARAM(IMC_SETOPENSTATUS as usize),
+                LPARAM(0),
+            );
+        }
+
+        #[cfg(not(windows))]
+        Command::new("fcitx5-remote").arg("-c").spawn().ok();
+    }
+
+    pub fn ime_enable(&self) {
+        #[cfg(windows)]
+        unsafe {
+            let fw = GetForegroundWindow();
+            let ime = ImmGetDefaultIMEWnd(fw);
+            let _res = SendMessageA(
+                ime,
+                WM_IME_CONTROL,
+                WPARAM(IMC_SETOPENSTATUS as usize),
+                LPARAM(1),
+            );
+        }
+
+        #[cfg(not(windows))]
+        Command::new("fcitx5-remote").arg("-o").spawn().ok();
     }
 
     pub fn current_stack_frame(&self) -> Option<&StackFrame> {
