@@ -63,6 +63,16 @@ use arc_swap::{
 };
 
 pub const DEFAULT_AUTO_SAVE_DELAY: u64 = 3000;
+use windows::Win32::Foundation::LRESULT;
+
+#[cfg(windows)]
+use windows::Win32::{
+    Foundation::{LPARAM, WPARAM},
+    UI::{
+        Input::Ime::{ImmGetDefaultIMEWnd, IMC_SETOPENSTATUS},
+        WindowsAndMessaging::{GetForegroundWindow, SendMessageA, WM_IME_CONTROL},
+    },
+};
 
 fn deserialize_duration_millis<'de, D>(deserializer: D) -> Result<Duration, D::Error>
 where
@@ -2206,6 +2216,9 @@ impl Editor {
                     return EditorEvent::Redraw
                 }
                 _ = &mut self.idle_timer  => {
+                    if self.mode == Mode::Normal {
+                        self.ime_disable();
+                    }
                     return EditorEvent::IdleTimer
                 }
             }
@@ -2260,6 +2273,98 @@ impl Editor {
 
             doc.set_selection(view.id, selection);
             doc.restore_cursor = false;
+        }
+        self.turn_off_ime();
+    }
+
+    pub fn turn_off_ime(&mut self) {
+        let ime_status = Self::ime_get_status();
+        let (_view, doc) = current!(self);
+        doc.set_ime_status(ime_status);
+        if ime_status {
+            self.ime_disable();
+        }
+
+        #[cfg(not(windows))]
+        self.ime_disable();
+    }
+
+    fn ime_get_status() -> bool {
+        #[cfg(windows)]
+        unsafe {
+            let fw = GetForegroundWindow();
+            let ime = ImmGetDefaultIMEWnd(fw);
+            let res = SendMessageA(ime, WM_IME_CONTROL, WPARAM(5usize), LPARAM(0));
+            if res == LRESULT(0isize) {
+                false
+            } else {
+                true
+            }
+        }
+
+        #[cfg(not(windows))]
+        return false;
+    }
+
+    pub fn ime_disable(&self) {
+        #[cfg(windows)]
+        unsafe {
+            let fw = GetForegroundWindow();
+            let ime = ImmGetDefaultIMEWnd(fw);
+            let _res = SendMessageA(
+                ime,
+                WM_IME_CONTROL,
+                WPARAM(IMC_SETOPENSTATUS as usize),
+                LPARAM(0),
+            );
+        }
+
+        //对MacOS，调用系统API切换输入法状态到英文输入状态
+        #[cfg(target_os = "macos")]
+        unsafe {
+            let source = TISCopyCurrentKeyboardInputSource();
+            let source = source.as_ref().unwrap();
+            let layout = TISGetInputSourceProperty(source, kTISPropertyInputSourceID);
+            let layout = layout.as_ref().unwrap();
+            let layout = CFString::wrap_under_get_rule(layout as CFTypeRef);
+            let layout = layout.to_string().to_string();
+            let layout = layout.as_str();
+            if(layout.contains("com.apple.keylayout.US")||layout.contains("com.apple.keylayout.ABC")){
+                return;
+            }else{
+                let source_id: Id<NSString> = NSString::from_str("com.apple.keylayout.US").into();
+                msg_send![source, source_id];
+            }
+        }
+    }
+
+    pub fn ime_enable(&self) {
+        #[cfg(windows)]
+        unsafe {
+            let fw = GetForegroundWindow();
+            let ime = ImmGetDefaultIMEWnd(fw);
+            let _res = SendMessageA(
+                ime,
+                WM_IME_CONTROL,
+                WPARAM(IMC_SETOPENSTATUS as usize),
+                LPARAM(1),
+            );
+        }
+
+        //对MacOS，调用系统API切换输入法状态到中文输入状态
+        #[cfg(target_os = "macos")]
+        unsafe {
+            let source = TISCopyCurrentKeyboardInputSource();
+            let source = source.as_ref().unwrap();
+            let layout = TISGetInputSourceProperty(source, kTISPropertyInputSourceID);
+            let layout = layout.as_ref().unwrap();
+            let layout = CFString::wrap_under_get_rule(layout as CFTypeRef);
+            let layout = layout.to_string().to_string();
+            let layout = layout.as_str();
+            if(layout.contains("com.apple.keylayout.US")||layout.contains("com.apple.keylayout.ABC")){
+                let source_id: Id<NSString> = NSString::from_str("com.apple.inputmethod.SCIM.ITABC").into();
+                msg_send![source, source_id];
+            }
         }
     }
 

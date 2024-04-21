@@ -214,6 +214,8 @@ pub struct Document {
     // of storing a copy on every doc. Then we can remove the surrounding `Arc` and use the
     // `ArcSwap` directly.
     syn_loader: Arc<ArcSwap<syntax::Loader>>,
+    //status of ime input when enter normal mode in this document
+    ime_status: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -221,6 +223,7 @@ pub struct DocumentColorSwatches {
     pub color_swatches: Vec<InlineAnnotation>,
     pub colors: Vec<syntax::Highlight>,
     pub color_swatches_padding: Vec<InlineAnnotation>,
+
 }
 
 /// Inlay hints for a single `(Document, View)` combo.
@@ -728,6 +731,7 @@ impl Document {
             color_swatches: None,
             color_swatch_controller: TaskController::new(),
             syn_loader,
+            ime_status: false,
         }
     }
 
@@ -2283,6 +2287,15 @@ impl Document {
     /// (since it often means inlay hints have been fully deactivated).
     pub fn reset_all_inlay_hints(&mut self) {
         self.inlay_hints = Default::default();
+    }
+
+    /// set ime status
+    pub fn set_ime_status(&mut self, enable_status: bool) {
+        self.ime_status = enable_status;
+    }
+    /// get ime status
+    pub fn get_ime_status(&mut self) -> bool {
+        self.ime_status
     }
 }
 
