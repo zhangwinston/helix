@@ -15,6 +15,8 @@ use crate::{
     Document, DocumentId, View, ViewId,
 };
 use helix_event::dispatch;
+use crate::{ime, ime::ImeManager, events::ModeSwitch};
+
 use helix_vcs::DiffProviderRegistry;
 
 use futures_util::stream::select_all::SelectAll;
@@ -436,6 +438,17 @@ pub enum KittyKeyboardProtocolConfig {
     Auto,
     Disabled,
     Enabled,
+    /// Whether to enable automatic IME switching based on syntax context.
+    #[serde(default)]
+    pub ime_context_switching: bool,
+    /// A list of LSP semantic token types that should trigger the IME.
+    /// For example: ["comment", "string"].
+    #[serde(default = "default_ime_context_triggers")]
+    pub ime_context_triggers: Vec<String>,
+}
+
+fn default_ime_context_triggers() -> Vec<String> {
+    vec!["comment".to_string(), "string".to_string()]
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, Eq, PartialOrd, Ord)]
@@ -1118,6 +1131,8 @@ impl Default for Config {
             editor_config: true,
             rainbow_brackets: false,
             kitty_keyboard_protocol: Default::default(),
+            ime_context_switching: false,
+            ime_context_triggers: default_ime_context_triggers(),
         }
     }
 }
@@ -1148,14 +1163,77 @@ use futures_util::stream::{Flatten, Once};
 
 type Diagnostics = BTreeMap<Uri, Vec<(lsp::Diagnostic, DiagnosticProvider)>>;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SyntaxZone {
+    Code,
+    Trigger,
+}
+
+/// Determines the syntax context (zone) at a given position in a document.
+fn syntax_zone_at_pos(doc: &Document, pos: Position, _config: &Config) -> SyntaxZone {
+    // Get language-specific configuration.
+    let lang_config = match doc.language_config() {
+        Some(config) => config,
+        // If a document has no language configuration at all, it's plain text.
+        None => return SyntaxZone::Trigger,
+    };
+
+    // 1. Check for whole-file trigger (`auto_ime_allscopes`).
+    // If configured for whole-file, it's a trigger zone.
+    //    (This also handles our smart default for "text", "markdown", etc.)
+    if lang_config.auto_ime_allscopes {
+            return SyntaxZone::Trigger;
+        }
+
+    // 2. Check for scope-based triggers (`auto_ime_scopes`).
+    // If we are supposed to check scopes, but there is no syntax tree,
+    //    we can't parse it. Treat as a trigger zone as per user request.
+    if !lang_config.auto_ime_scopes.is_empty() && doc.syntax().is_none() {
+        return SyntaxZone::Trigger;
+    }
+
+    // 3. If we have a syntax tree, perform the scope check.
+    if let Some(syntax) = doc.syntax() {
+        if !lang_config.auto_ime_scopes.is_empty() {
+            let text = doc.text();
+            let char_offset = text.line_to_char(pos.row) + pos.col;
+            let byte_offset = text.char_to_byte(char_offset);
+
+            if let Some(node) = syntax
+                .tree()
+                .root_node()
+                .descendant_for_byte_range(byte_offset as u32, byte_offset as u32)
+            {
+                let node_kind = node.kind();
+                if lang_config
+                    .auto_ime_scopes
+                    .iter()
+                    .any(|trigger| node_kind.contains(trigger))
+                {
+                    return SyntaxZone::Trigger;
+                }
+            }
+        }
+    }
+    SyntaxZone::Code
+}
+
 pub struct Editor {
     /// Current editing mode.
     pub mode: Mode,
+    pub ime_manager: Box<dyn ImeManager>, // ADDED: Made public
+    /// Tracks if the IME should be active based on the current syntax context.
+    ime_context_active: bool,
+    /// Cache for the last selection to avoid redundant IME state updates.
+    last_ime_selection: HashMap<ViewId, Selection>,
+    /// Cache for the last syntax zone to avoid redundant IME state updates.
+    ime_last_zone: HashMap<ViewId, SyntaxZone>,
     pub tree: Tree,
     pub next_document_id: DocumentId,
     pub documents: BTreeMap<DocumentId, Document>,
+    pub ime_states: HashMap<ViewId, bool>, // ADDED: IME states per view
 
-    // We Flatten<> to resolve the inner DocumentSavedEventFuture. For that we need a stream of streams, hence the Once<>.
+    // We Flatten<> to resolve the inner DocumentSavedEventFuture. For that we need a stream of streams, hence the Once<>./
     // https://stackoverflow.com/a/66875668
     pub saves: HashMap<DocumentId, UnboundedSender<Once<DocumentSavedEventFuture>>>,
     pub save_queue: SelectAll<Flatten<UnboundedReceiverStream<Once<DocumentSavedEventFuture>>>>,
@@ -1184,6 +1262,7 @@ pub struct Editor {
 
     /// The primary Selection prior to starting a goto_line_number preview. This is
     /// restored when the preview is aborted, or added to the jumplist when it is
+
     /// confirmed.
     pub last_selection: Option<Selection>,
 
@@ -1299,11 +1378,18 @@ impl Editor {
         // HAXX: offset the render area height by 1 to account for prompt/commandline
         area.height -= 1;
 
+        let ime_manager = ime::new_ime_manager();
+
         Self {
             mode: Mode::Normal,
+            ime_manager,
+            ime_context_active: true,
             tree: Tree::new(area),
             next_document_id: DocumentId::default(),
             documents: BTreeMap::new(),
+            ime_states: HashMap::new(), // ADDED: Initialize ime_states
+            last_ime_selection: HashMap::new(), // ADDED: Initialize last_ime_selection
+            ime_last_zone: HashMap::new(), // ADDED: Initialize ime_last_zone
             saves: HashMap::new(),
             save_queue: SelectAll::new(),
             write_count: 0,
@@ -1917,6 +2003,7 @@ impl Editor {
         for doc in self.documents_mut() {
             doc.remove_view(id);
         }
+        self.ime_states.remove(&id); // ADDED: Remove IME state for the closed view
         self.tree.remove(id);
         self._refresh();
     }
@@ -2048,25 +2135,25 @@ impl Editor {
             return;
         }
 
-        // Reset mode to normal and ensure any pending changes are committed in the old document.
-        self.enter_normal_mode();
-        let (view, doc) = current!(self);
-        doc.append_changes_to_history(view);
-        self.ensure_cursor_in_view(view_id);
-        // Update jumplist selections with new document changes.
-        for (view, _focused) in self.tree.views_mut() {
-            let doc = doc_mut!(self, &view.doc);
-            view.sync_changes(doc);
-        }
-
         let prev_id = std::mem::replace(&mut self.tree.focus, view_id);
-        doc_mut!(self).mark_as_focused();
 
-        let focus_lost = self.tree.get(prev_id).doc;
-        dispatch(DocumentFocusLost {
-            editor: self,
-            doc: focus_lost,
-        });
+        // if leaving the view: mode should reset and the cursor should be
+        // within view
+        if prev_id != view_id {
+            // Save IME state for the view we are leaving
+            if self.mode == Mode::Insert {
+                let prev_ime_status = self.ime_manager.disable_and_get_status();
+                self.ime_states.insert(prev_id, prev_ime_status);
+            }
+
+            // Restore IME state for the view we are entering
+            if self.mode == Mode::Insert {
+                let ime_status = self.ime_states.get(&view_id).copied();
+                self.ime_manager.enable_with_status(ime_status);
+            } else {
+                self.ime_manager.disable_and_get_status(); // Ensure IME is off in Normal mode
+            }
+        }
     }
 
     pub fn focus_next(&mut self) {
@@ -2225,7 +2312,7 @@ impl Editor {
             ),
         )
         .await
-        .map(|_| ())
+        .map(|_| (()))
     }
 
     pub async fn wait_event(&mut self) -> EditorEvent {
@@ -2291,35 +2378,150 @@ impl Editor {
         Ok(())
     }
 
-    /// Switches the editor into normal mode.
-    pub fn enter_normal_mode(&mut self) {
-        use helix_core::graphemes;
 
-        if self.mode == Mode::Normal {
+
+    pub fn enter_normal_mode(&mut self) {
+        self.set_mode(Mode::Normal);
+    }
+
+    pub fn update_ime_state(&mut self) {
+        let config = self.config();
+        // If the feature is disabled, or we are not in insert mode, do nothing.
+        if !config.ime_context_switching || self.mode != Mode::Insert {
             return;
         }
 
-        self.mode = Mode::Normal;
         let (view, doc) = current!(self);
+        let view_id = view.id;
+        let selection = doc.selection(view_id).clone();
 
-        try_restore_indent(doc, view);
-
-        // if leaving append mode, move cursor back by 1
-        if doc.restore_cursor {
-            let text = doc.text().slice(..);
-            let selection = doc.selection(view.id).clone().transform(|range| {
-                let mut head = range.to();
-                if range.head > range.anchor {
-                    head = graphemes::prev_grapheme_boundary(text, head);
-                }
-
-                Range::new(range.from(), head)
-            });
-
-            doc.set_selection(view.id, selection);
-            doc.restore_cursor = false;
+        // Avoid redundant updates if the selection has not changed.
+        if self.last_ime_selection.get(&view_id) == Some(&selection) {
+            return;
         }
+
+        // If there is no syntax tree, there's no context to switch on.
+        // In this case, we should not interfere with the mode-based IME state.
+        // The state set by `set_mode` should be final for this file type.
+        if doc.syntax().is_none() {
+            // Still update the cache to prevent re-checks for every cursor movement.
+            self.last_ime_selection.insert(view_id, selection);
+            return;
+        }
+
+        // Check the position of the primary cursor to determine if the zone has changed
+        let primary_selection = selection.primary();
+        let pos_char = primary_selection.cursor(doc.text().slice(..));
+                    let line = doc.text().char_to_line(pos_char);
+                    let col = pos_char - doc.text().line_to_char(line);
+                    let pos = Position { row: line, col };
+        let current_zone = syntax_zone_at_pos(doc, pos, &config);
+
+        // Only update IME state if the zone has changed
+        let last_zone = self.ime_last_zone.entry(view_id).or_insert(SyntaxZone::Code);
+        if current_zone != *last_zone {
+            // Zone has changed, update IME state
+            if current_zone == SyntaxZone::Trigger {
+                // Entering a syntax zone where IME should be on. Restore its last known state.
+                let last_user_status = self.ime_states.get(&view_id).copied();
+                self.ime_manager.enable_with_status(last_user_status);
+            } else {
+                // Entering a syntax zone where IME should be off. Disable it and save its state.
+                let current_ime_status = self.ime_manager.disable_and_get_status();
+                self.ime_states.insert(view_id, current_ime_status);
+            }
+            self.ime_context_active = current_zone == SyntaxZone::Trigger;
+            *last_zone = current_zone; // Update the cached zone
+        }
+
+        // Update the cache with the latest selection.
+        self.last_ime_selection.insert(view_id, selection);
     }
+
+    pub fn set_mode(&mut self, new_mode: Mode) {
+        use helix_core::graphemes;
+        let old_mode = self.mode;
+        if old_mode == new_mode {
+            return;
+        }
+
+        self.mode = new_mode;
+        let (view, doc) = current_ref!(self);
+        let view_id = view.id;
+        let config = self.config();
+
+        // Only apply smart IME logic if the feature is enabled.
+        if config.ime_context_switching {
+            // Determine if the primary cursor is in a trigger zone.
+            // This check is relevant for both entering and leaving insert mode.
+            let primary_selection = doc.selection(view_id).primary();
+            let pos_char = primary_selection.cursor(doc.text().slice(..));
+            let line = doc.text().char_to_line(pos_char);
+            let col = pos_char - doc.text().line_to_char(line);
+            let pos = Position { row: line, col };
+            let in_trigger_zone = syntax_zone_at_pos(doc, pos, &config) == SyntaxZone::Trigger;
+
+            if new_mode == Mode::Insert && old_mode != Mode::Insert {
+                // ENTERING Insert mode
+                if in_trigger_zone {
+                    // If entering a trigger zone, restore the last known state.
+                    let last_user_status = self.ime_states.get(&view_id).copied();
+                    self.ime_manager.enable_with_status(last_user_status);
+                    self.ime_context_active = last_user_status.unwrap_or(false);
+                } else {
+                    // If entering a non-trigger zone, ensure IME is off.
+                    // We don't need to save state, just disable.
+                    self.ime_manager.disable_and_get_status();
+                    self.ime_context_active = false;
+                }
+            } else if new_mode != Mode::Insert && old_mode == Mode::Insert {
+                // LEAVING Insert mode
+                // First, ensure IME is disabled since we are no longer in insert mode.
+                let current_ime_status = self.ime_manager.disable_and_get_status();
+
+                // Only save the IME state if we were in a trigger zone.
+                // This prevents overwriting the "string/comment" IME state with the
+                // "code" IME state (which is usually off).
+                if in_trigger_zone {
+                    self.ime_states.insert(view_id, current_ime_status);
+                }
+                self.ime_context_active = false;
+            }
+        }
+
+        // Perform other mode-specific actions
+        if new_mode == Mode::Normal {
+            let (view, doc) = current!(self);
+            try_restore_indent(doc, view);
+
+            // if leaving append mode, move cursor back by 1
+            if doc.restore_cursor {
+                let text = doc.text().slice(..);
+                let selection = doc.selection(view.id).clone().transform(|range| {
+                    let mut head = range.to();
+                    if range.head > range.anchor {
+                        head = graphemes::prev_grapheme_boundary(text, head);
+                    }
+
+                    Range::new(range.from(), head)
+                });
+        
+                doc.set_selection(view.id, selection);
+                doc.restore_cursor = false;
+            }
+
+            doc.append_changes_to_history(view);
+            doc.selections();
+            //doc.ensure_primary_selection_is_valid();
+            doc.reset_all_inlay_hints();            
+        }
+        helix_event::dispatch(ModeSwitch {
+            old_mode,
+            new_mode: self.mode,
+            editor: self,
+        });
+    }
+
 
     pub fn current_stack_frame(&self) -> Option<&dap::StackFrame> {
         self.debug_adapters.current_stack_frame()

@@ -744,6 +744,7 @@ fn move_impl(cx: &mut Context, move_fn: MoveFn, dir: Direction, behaviour: Movem
     });
     drop(annotations);
     doc.set_selection(view.id, selection);
+    cx.editor.update_ime_state();
 }
 
 use helix_core::movement::{move_horizontally, move_vertically};
@@ -841,12 +842,14 @@ fn goto_line_end(cx: &mut Context) {
         } else {
             Movement::Move
         },
-    )
+    );
+    cx.editor.update_ime_state();
 }
 
 fn extend_to_line_end(cx: &mut Context) {
     let (view, doc) = current!(cx.editor);
-    goto_line_end_impl(view, doc, Movement::Extend)
+    goto_line_end_impl(view, doc, Movement::Extend);
+    cx.editor.update_ime_state();
 }
 
 fn goto_line_end_newline_impl(view: &mut View, doc: &mut Document, movement: Movement) {
@@ -871,12 +874,14 @@ fn goto_line_end_newline(cx: &mut Context) {
         } else {
             Movement::Move
         },
-    )
+    );
+    cx.editor.update_ime_state();
 }
 
 fn extend_to_line_end_newline(cx: &mut Context) {
     let (view, doc) = current!(cx.editor);
-    goto_line_end_newline_impl(view, doc, Movement::Extend)
+    goto_line_end_newline_impl(view, doc, Movement::Extend);
+    cx.editor.update_ime_state();
 }
 
 fn goto_line_start_impl(view: &mut View, doc: &mut Document, movement: Movement) {
@@ -902,7 +907,8 @@ fn goto_line_start(cx: &mut Context) {
         } else {
             Movement::Move
         },
-    )
+    );
+    cx.editor.update_ime_state();
 }
 
 fn goto_next_buffer(cx: &mut Context) {
@@ -940,7 +946,8 @@ fn goto_buffer(editor: &mut Editor, direction: Direction, count: usize) {
 
 fn extend_to_line_start(cx: &mut Context) {
     let (view, doc) = current!(cx.editor);
-    goto_line_start_impl(view, doc, Movement::Extend)
+    goto_line_start_impl(view, doc, Movement::Extend);
+    cx.editor.update_ime_state();
 }
 
 fn kill_to_line_start(cx: &mut Context) {
@@ -1001,12 +1008,14 @@ fn goto_first_nonwhitespace(cx: &mut Context) {
         } else {
             Movement::Move
         },
-    )
+    );
+    cx.editor.update_ime_state();
 }
 
 fn extend_to_first_nonwhitespace(cx: &mut Context) {
     let (view, doc) = current!(cx.editor);
-    goto_first_nonwhitespace_impl(view, doc, Movement::Extend)
+    goto_first_nonwhitespace_impl(view, doc, Movement::Extend);
+    cx.editor.update_ime_state();
 }
 
 fn goto_first_nonwhitespace_impl(view: &mut View, doc: &mut Document, movement: Movement) {
@@ -2908,6 +2917,7 @@ fn delete_selection_impl(cx: &mut Context, op: Operation, yank: YankAction) {
             }
         }
     }
+    cx.editor.update_ime_state();
 }
 
 #[inline]
@@ -2953,6 +2963,7 @@ fn delete_by_selection_insert_mode(
         );
     }
     doc.apply(&transaction, view.id);
+    cx.editor.update_ime_state();
 }
 
 fn delete_selection(cx: &mut Context) {
@@ -3004,7 +3015,7 @@ fn ensure_selections_forward(cx: &mut Context) {
 }
 
 fn enter_insert_mode(cx: &mut Context) {
-    cx.editor.mode = Mode::Insert;
+    cx.editor.set_mode(Mode::Insert);
 }
 
 // inserts at the start of each selection
@@ -3927,12 +3938,12 @@ fn select_mode(cx: &mut Context) {
     });
     doc.set_selection(view.id, selection);
 
-    cx.editor.mode = Mode::Select;
+    cx.editor.set_mode(Mode::Select);
 }
 
 fn exit_select_mode(cx: &mut Context) {
     if cx.editor.mode == Mode::Select {
-        cx.editor.mode = Mode::Normal;
+        cx.editor.set_mode(Mode::Normal);
     }
 }
 
@@ -4157,6 +4168,7 @@ pub mod insert {
         }
 
         helix_event::dispatch(PostInsertChar { c, cx });
+        cx.editor.update_ime_state();
     }
 
     pub fn smart_tab(cx: &mut Context) {
@@ -4245,7 +4257,7 @@ pub mod insert {
                 _ => (),
             };
             // Restore the old mode.
-            cx.editor.mode = old_mode;
+            cx.editor.set_mode(old_mode);
         });
     }
 
@@ -4396,6 +4408,7 @@ pub mod insert {
 
         let (view, doc) = current!(cx.editor);
         doc.apply(&transaction, view.id);
+        cx.editor.update_ime_state();
     }
 
     pub fn delete_char_backward(cx: &mut Context) {
@@ -4475,6 +4488,7 @@ pub mod insert {
             });
         let (view, doc) = current!(cx.editor);
         doc.apply(&transaction, view.id);
+        cx.editor.update_ime_state();
     }
 
     pub fn delete_char_forward(cx: &mut Context) {
@@ -4527,6 +4541,7 @@ fn undo(cx: &mut Context) {
             break;
         }
     }
+    cx.editor.update_ime_state();
 }
 
 fn redo(cx: &mut Context) {
@@ -4538,6 +4553,7 @@ fn redo(cx: &mut Context) {
             break;
         }
     }
+    cx.editor.update_ime_state();
 }
 
 fn earlier(cx: &mut Context) {
@@ -4550,6 +4566,7 @@ fn earlier(cx: &mut Context) {
             break;
         }
     }
+    cx.editor.update_ime_state();
 }
 
 fn later(cx: &mut Context) {
@@ -4562,6 +4579,7 @@ fn later(cx: &mut Context) {
             break;
         }
     }
+    cx.editor.update_ime_state();
 }
 
 fn commit_undo_checkpoint(cx: &mut Context) {
@@ -4786,21 +4804,25 @@ pub(crate) fn paste_bracketed_value(cx: &mut Context, contents: String) {
 fn paste_clipboard_after(cx: &mut Context) {
     paste(cx.editor, '+', Paste::After, cx.count());
     exit_select_mode(cx);
+    cx.editor.update_ime_state();
 }
 
 fn paste_clipboard_before(cx: &mut Context) {
     paste(cx.editor, '+', Paste::Before, cx.count());
     exit_select_mode(cx);
+    cx.editor.update_ime_state();
 }
 
 fn paste_primary_clipboard_after(cx: &mut Context) {
     paste(cx.editor, '*', Paste::After, cx.count());
     exit_select_mode(cx);
+    cx.editor.update_ime_state();
 }
 
 fn paste_primary_clipboard_before(cx: &mut Context) {
     paste(cx.editor, '*', Paste::Before, cx.count());
     exit_select_mode(cx);
+    cx.editor.update_ime_state();
 }
 
 fn replace_with_yanked(cx: &mut Context) {
@@ -4811,6 +4833,7 @@ fn replace_with_yanked(cx: &mut Context) {
         cx.count(),
     );
     exit_select_mode(cx);
+    cx.editor.update_ime_state();
 }
 
 fn replace_with_yanked_impl(editor: &mut Editor, register: char, count: usize) {
@@ -4859,11 +4882,13 @@ fn replace_with_yanked_impl(editor: &mut Editor, register: char, count: usize) {
 fn replace_selections_with_clipboard(cx: &mut Context) {
     replace_with_yanked_impl(cx.editor, '+', cx.count());
     exit_select_mode(cx);
+    cx.editor.update_ime_state();
 }
 
 fn replace_selections_with_primary_clipboard(cx: &mut Context) {
     replace_with_yanked_impl(cx.editor, '*', cx.count());
     exit_select_mode(cx);
+    cx.editor.update_ime_state();
 }
 
 fn paste(editor: &mut Editor, register: char, pos: Paste, count: usize) {
@@ -4885,6 +4910,7 @@ fn paste_after(cx: &mut Context) {
         cx.count(),
     );
     exit_select_mode(cx);
+    cx.editor.update_ime_state();
 }
 
 fn paste_before(cx: &mut Context) {
@@ -4896,6 +4922,7 @@ fn paste_before(cx: &mut Context) {
         cx.count(),
     );
     exit_select_mode(cx);
+    cx.editor.update_ime_state();
 }
 
 fn get_lines(doc: &Document, view_id: ViewId) -> Vec<usize> {

@@ -105,6 +105,8 @@ fn setup_integration_logging() {
 
 impl Application {
     pub fn new(args: Args, config: Config, lang_loader: syntax::Loader) -> Result<Self, Error> {
+        helix_view::init();
+
         #[cfg(feature = "integration")]
         setup_integration_logging();
 

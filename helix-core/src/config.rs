@@ -2,9 +2,28 @@ use crate::syntax::{config::Configuration, Loader, LoaderError};
 
 /// Language configuration based on built-in languages.toml.
 pub fn default_lang_config() -> Configuration {
-    helix_loader::config::default_lang_config()
+    let mut config: Configuration = helix_loader::config::default_lang_config()
         .try_into()
-        .expect("Could not deserialize built-in languages.toml")
+        .expect("Could not deserialize built-in languages.toml");
+
+    // Apply smart defaults for IME settings
+    for lang_config in &mut config.language {
+        // Only apply defaults if no explicit user config is set
+        if !lang_config.auto_ime_allscopes && lang_config.auto_ime_scopes.is_empty() {
+            match lang_config.language_id.as_str() {
+                "markdown" | "git-commit" | "text" => {
+                    lang_config.auto_ime_allscopes = true;
+                }
+                _ => {
+                    if lang_config.comment_tokens.is_some() {
+                        lang_config.auto_ime_scopes =
+                            vec!["string".to_string(), "comment".to_string()];
+                    }
+                }
+            }
+        }
+    }
+    config
 }
 
 /// Language configuration loader based on built-in languages.toml.
@@ -36,10 +55,27 @@ pub fn user_lang_config() -> Result<Configuration, toml::de::Error> {
 
 /// Language configuration loader based on user configured languages.toml.
 pub fn user_lang_loader() -> Result<Loader, LanguageLoaderError> {
-    let config: Configuration = helix_loader::config::user_lang_config()
+    let mut config: Configuration = helix_loader::config::user_lang_config()
         .map_err(LanguageLoaderError::DeserializeError)?
         .try_into()
         .map_err(LanguageLoaderError::DeserializeError)?;
 
+    // Apply smart defaults for IME settings
+    for lang_config in &mut config.language {
+        // Only apply defaults if no explicit user config is set
+        if !lang_config.auto_ime_allscopes && lang_config.auto_ime_scopes.is_empty() {
+            match lang_config.language_id.as_str() {
+                "markdown" | "git-commit" | "text" => {
+                    lang_config.auto_ime_allscopes = true;
+                }
+                _ => {
+                    if lang_config.comment_tokens.is_some() {
+                        lang_config.auto_ime_scopes =
+                            vec!["string".to_string(), "comment".to_string()];
+                    }
+                }
+            }
+        }
+    }
     Loader::new(config).map_err(LanguageLoaderError::LoaderError)
 }
