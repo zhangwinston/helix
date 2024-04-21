@@ -15,6 +15,8 @@ use crate::{
     Document, DocumentId, View, ViewId,
 };
 use helix_event::dispatch;
+use crate::{ime, ime::ImeManager, events::ModeSwitch};
+
 use helix_vcs::DiffProviderRegistry;
 
 use futures_util::stream::select_all::SelectAll;
@@ -381,6 +383,17 @@ pub struct Config {
     pub editor_config: bool,
     /// Whether to render rainbow colors for matching brackets. Defaults to `false`.
     pub rainbow_brackets: bool,
+    /// Whether to enable automatic IME switching based on syntax context.
+    #[serde(default)]
+    pub ime_context_switching: bool,
+    /// A list of LSP semantic token types that should trigger the IME.
+    /// For example: ["comment", "string"].
+    #[serde(default = "default_ime_context_triggers")]
+    pub ime_context_triggers: Vec<String>,
+}
+
+fn default_ime_context_triggers() -> Vec<String> {
+    vec!["comment".to_string(), "string".to_string()]
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, Eq, PartialOrd, Ord)]
@@ -1061,6 +1074,8 @@ impl Default for Config {
             clipboard_provider: ClipboardProvider::default(),
             editor_config: true,
             rainbow_brackets: false,
+            ime_context_switching: true,
+            ime_context_triggers: default_ime_context_triggers(),
         }
     }
 }
@@ -1091,14 +1106,49 @@ use futures_util::stream::{Flatten, Once};
 
 type Diagnostics = BTreeMap<Uri, Vec<(lsp::Diagnostic, DiagnosticProvider)>>;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SyntaxZone {
+    Code,
+    Trigger,
+}
+
+/// Determines the syntax context (zone) at a given position in a document.
+fn syntax_zone_at_pos(doc: &Document, pos: Position, config: &Config) -> SyntaxZone {
+    let Some(syntax) = doc.syntax() else {
+        return SyntaxZone::Code;
+    };
+
+    let text = doc.text();
+    let char_offset = text.line_to_char(pos.row) + pos.col;
+    let byte_offset = text.char_to_byte(char_offset);
+
+    let Some(node) = syntax.tree().root_node().descendant_for_byte_range(byte_offset as u32, byte_offset as u32) else {
+        return SyntaxZone::Code;
+    };
+
+    let node_kind = node.kind();
+    // Check against user-configured triggers
+    for trigger in &config.ime_context_triggers {
+        if node_kind.contains(trigger) {
+            return SyntaxZone::Trigger;
+        }
+    }
+
+    SyntaxZone::Code
+}
+
 pub struct Editor {
     /// Current editing mode.
     pub mode: Mode,
+    pub ime_manager: Box<dyn ImeManager>, // ADDED: Made public
+    /// Tracks if the IME should be active based on the current syntax context.
+    ime_context_active: bool,
     pub tree: Tree,
     pub next_document_id: DocumentId,
     pub documents: BTreeMap<DocumentId, Document>,
+    pub ime_states: HashMap<ViewId, bool>, // ADDED: IME states per view
 
-    // We Flatten<> to resolve the inner DocumentSavedEventFuture. For that we need a stream of streams, hence the Once<>.
+    // We Flatten<> to resolve the inner DocumentSavedEventFuture. For that we need a stream of streams, hence the Once<>./
     // https://stackoverflow.com/a/66875668
     pub saves: HashMap<DocumentId, UnboundedSender<Once<DocumentSavedEventFuture>>>,
     pub save_queue: SelectAll<Flatten<UnboundedReceiverStream<Once<DocumentSavedEventFuture>>>>,
@@ -1127,6 +1177,7 @@ pub struct Editor {
 
     /// The primary Selection prior to starting a goto_line_number preview. This is
     /// restored when the preview is aborted, or added to the jumplist when it is
+
     /// confirmed.
     pub last_selection: Option<Selection>,
 
@@ -1242,11 +1293,16 @@ impl Editor {
         // HAXX: offset the render area height by 1 to account for prompt/commandline
         area.height -= 1;
 
+        let ime_manager = ime::new_ime_manager();
+
         Self {
             mode: Mode::Normal,
+            ime_manager,
+            ime_context_active: true,
             tree: Tree::new(area),
             next_document_id: DocumentId::default(),
             documents: BTreeMap::new(),
+            ime_states: HashMap::new(), // ADDED: Initialize ime_states
             saves: HashMap::new(),
             save_queue: SelectAll::new(),
             write_count: 0,
@@ -1860,6 +1916,7 @@ impl Editor {
         for doc in self.documents_mut() {
             doc.remove_view(id);
         }
+        self.ime_states.remove(&id); // ADDED: Remove IME state for the closed view
         self.tree.remove(id);
         self._refresh();
     }
@@ -1992,22 +2049,19 @@ impl Editor {
         // if leaving the view: mode should reset and the cursor should be
         // within view
         if prev_id != view_id {
-            self.enter_normal_mode();
-            self.ensure_cursor_in_view(view_id);
-
-            // Update jumplist selections with new document changes.
-            for (view, _focused) in self.tree.views_mut() {
-                let doc = doc_mut!(self, &view.doc);
-                view.sync_changes(doc);
+            // Save IME state for the view we are leaving
+            if self.mode == Mode::Insert {
+                let prev_ime_status = self.ime_manager.disable_and_get_status();
+                self.ime_states.insert(prev_id, prev_ime_status);
             }
-            let view = view!(self, view_id);
-            let doc = doc_mut!(self, &view.doc);
-            doc.mark_as_focused();
-            let focus_lost = self.tree.get(prev_id).doc;
-            dispatch(DocumentFocusLost {
-                editor: self,
-                doc: focus_lost,
-            });
+
+            // Restore IME state for the view we are entering
+            if self.mode == Mode::Insert {
+                let ime_status = self.ime_states.get(&view_id).copied();
+                self.ime_manager.enable_with_status(ime_status);
+            } else {
+                self.ime_manager.disable_and_get_status(); // Ensure IME is off in Normal mode
+            }
         }
     }
 
@@ -2167,7 +2221,7 @@ impl Editor {
             ),
         )
         .await
-        .map(|_| ())
+        .map(|_| (()))
     }
 
     pub async fn wait_event(&mut self) -> EditorEvent {
@@ -2233,35 +2287,96 @@ impl Editor {
         Ok(())
     }
 
-    /// Switches the editor into normal mode.
-    pub fn enter_normal_mode(&mut self) {
-        use helix_core::graphemes;
 
-        if self.mode == Mode::Normal {
+
+    pub fn enter_normal_mode(&mut self) {
+        self.set_mode(Mode::Normal);
+    }
+
+    pub fn update_ime_state(&mut self) {
+        let config = self.config();
+        let (view, doc) = current!(self);
+        let view_id = view.id;
+
+        let mut should_be_enabled = false;
+        if self.mode == Mode::Insert {
+            if config.ime_context_switching {
+                // check the position of every cursor, if any are in a trigger zone, enable IME
+                should_be_enabled = doc.selection(view_id).iter().any(|s| {
+                    let pos_char = s.cursor(doc.text().slice(..));
+                    let line = doc.text().char_to_line(pos_char);
+                    let col = pos_char - doc.text().line_to_char(line);
+                    let pos = Position { row: line, col };
+                    syntax_zone_at_pos(doc, pos, &config) == SyntaxZone::Trigger
+                });
+            } else {
+                // Fallback to old behavior: IME is always restored in insert mode
+                // if context switching is off.
+                should_be_enabled = true;
+            }
+        }
+
+        // In Normal or Select mode, IME should always be disabled.
+        // should_be_enabled is already false here.
+        if should_be_enabled != self.ime_context_active {
+            if should_be_enabled {
+                // Entering a state where IME should be on. Restore its last known state.
+                let last_user_status = self.ime_states.get(&view_id).copied();
+                self.ime_manager.enable_with_status(last_user_status);
+            } else {
+                // Entering a state where IME should be off. Disable it and save its state.
+                let current_ime_status = self.ime_manager.disable_and_get_status();
+                self.ime_states.insert(view_id, current_ime_status);
+            }
+            self.ime_context_active = should_be_enabled;
+        }
+    }
+
+    pub fn set_mode(&mut self, new_mode: Mode) {
+        use helix_core::graphemes;
+        let old_mode = self.mode;
+        if old_mode == new_mode {
             return;
         }
 
-        self.mode = Mode::Normal;
-        let (view, doc) = current!(self);
+        self.mode = new_mode;
 
-        try_restore_indent(doc, view);
+        self.update_ime_state();
 
-        // if leaving append mode, move cursor back by 1
-        if doc.restore_cursor {
-            let text = doc.text().slice(..);
-            let selection = doc.selection(view.id).clone().transform(|range| {
-                let mut head = range.to();
-                if range.head > range.anchor {
-                    head = graphemes::prev_grapheme_boundary(text, head);
-                }
+        // Perform other mode-specific actions
+        if new_mode == Mode::Normal {
+            let (view, doc) = current!(self);
+            try_restore_indent(doc, view);
 
-                Range::new(range.from(), head)
-            });
+            // if leaving append mode, move cursor back by 1
+            if doc.restore_cursor {
+                let text = doc.text().slice(..);
+                let selection = doc.selection(view.id).clone().transform(|range| {
+                    let mut head = range.to();
+                    if range.head > range.anchor {
+                        head = graphemes::prev_grapheme_boundary(text, head);
+                    }
 
-            doc.set_selection(view.id, selection);
-            doc.restore_cursor = false;
+                    Range::new(range.from(), head)
+                });
+        
+                doc.set_selection(view.id, selection);
+                doc.restore_cursor = false;
+            }
+
+            doc.append_changes_to_history(view);
+            doc.selections();
+            //doc.ensure_primary_selection_is_valid();
+            doc.reset_all_inlay_hints();            
         }
+
+        helix_event::dispatch(ModeSwitch {
+            old_mode,
+            new_mode: self.mode,
+            editor: self,
+        });
     }
+
 
     pub fn current_stack_frame(&self) -> Option<&dap::StackFrame> {
         self.debug_adapters.current_stack_frame()

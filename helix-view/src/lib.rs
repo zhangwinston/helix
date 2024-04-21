@@ -13,6 +13,7 @@ pub mod gutter;
 pub mod handlers;
 pub mod info;
 pub mod input;
+
 pub mod keyboard;
 pub mod register;
 pub mod theme;
@@ -73,8 +74,20 @@ pub fn align_view(doc: &mut Document, view: &View, align: Align) {
     doc.set_view_offset(view.id, view_offset);
 }
 
+
+
+
+
+pub mod ime;
+
 pub use document::Document;
+
 pub use editor::Editor;
 use helix_core::char_idx_at_visual_offset;
 pub use theme::Theme;
 pub use view::View;
+
+pub fn init() {
+    use events::*;
+    helix_event::register_event::<ModeSwitch>();
+}

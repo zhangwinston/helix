@@ -221,6 +221,7 @@ pub struct DocumentColorSwatches {
     pub color_swatches: Vec<InlineAnnotation>,
     pub colors: Vec<syntax::Highlight>,
     pub color_swatches_padding: Vec<InlineAnnotation>,
+
 }
 
 /// Inlay hints for a single `(Document, View)` combo.
@@ -2284,6 +2285,7 @@ impl Document {
     pub fn reset_all_inlay_hints(&mut self) {
         self.inlay_hints = Default::default();
     }
+
 }
 
 #[derive(Debug, Default)]

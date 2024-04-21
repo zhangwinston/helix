@@ -21,7 +21,12 @@ default-members = [
 ]
 
 [profile.release]
-lto = "thin"
+lto = true
+strip = true
+codegen-units = 1
+panic = "abort"
+opt-level = "z"
+# debug = true
 
 [profile.opt]
 inherits = "release"
