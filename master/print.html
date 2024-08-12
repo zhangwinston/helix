@@ -202,8 +202,13 @@ for instructions.</p>
 </ul>
 <h2 id="pre-built-binaries"><a class="header" href="#pre-built-binaries">Pre-built binaries</a></h2>
 <p>Download pre-built binaries from the <a href="https://github.com/helix-editor/helix/releases">GitHub Releases page</a>.
-Add the <code>hx</code> binary to your system's <code>$PATH</code> to use it from the command line, and copy the <code>runtime</code> directory into the config directory (for example <code>~/.config/helix/runtime</code> on Linux/macOS).
-The runtime location can be overriden via the HELIX_RUNTIME environment variable.</p>
+The tarball contents include an <code>hx</code> binary and a <code>runtime</code> directory.
+To set up Helix:</p>
+<ol>
+<li>Add the <code>hx</code> binary to your system's <code>$PATH</code> to allow it to be used from the command line.</li>
+<li>Copy the <code>runtime</code> directory to a location that <code>hx</code> searches for runtime files. A typical location on Linux/macOS is <code>~/.config/helix/runtime</code>.</li>
+</ol>
+<p>To see the runtime directories that <code>hx</code> searches, run <code>hx --health</code>. If necessary, you can override the default runtime location by setting the <code>HELIX_RUNTIME</code> environment variable.</p>
 <div style="break-before: page; page-break-before: always;"></div><h2 id="package-managers"><a class="header" href="#package-managers">Package managers</a></h2>
 <ul>
 <li><a href="package-managers.html#linux">Linux</a>
@@ -924,8 +929,11 @@ useful when you're simply looking over text and not actively editing it.</p>
 <div class="table-wrapper"><table><thead><tr><th>Key</th><th>Description</th></tr></thead><tbody>
 <tr><td><code>Shift-Tab</code>, <code>Ctrl-p</code>, <code>Up</code></td><td>Previous entry</td></tr>
 <tr><td><code>Tab</code>, <code>Ctrl-n</code>, <code>Down</code></td><td>Next entry</td></tr>
+<tr><td><code>Enter</code></td><td>Close menu and accept completion</td></tr>
+<tr><td><code>Ctrl-c</code></td><td>Close menu and reject completion</td></tr>
 </tbody></table>
 </div>
+<p>Any other keypresses result in the completion being accepted.</p>
 <h5 id="signature-help-popup"><a class="header" href="#signature-help-popup">Signature-help Popup</a></h5>
 <p>Displays the signature of the selected completion item. Remapping currently not supported.</p>
 <div class="table-wrapper"><table><thead><tr><th>Key</th><th>Description</th></tr></thead><tbody>
@@ -1163,7 +1171,7 @@ appropriate Language Server.</p>
 <p>Also see the <a href="./languages.html">Language Configuration</a> docs and the <a href="./guides/adding_languages.html">Adding
 Languages</a> guide for more language configuration information.</p>
 <div class="table-wrapper"><table><thead><tr><th>Language</th><th>Syntax Highlighting</th><th>Treesitter Textobjects</th><th>Auto Indent</th><th>Default LSP</th></tr></thead><tbody>
-<tr><td>ada</td><td>✓</td><td>✓</td><td></td><td><code>ada_language_server</code>, <code>ada_language_server</code></td></tr>
+<tr><td>ada</td><td>✓</td><td>✓</td><td></td><td><code>ada_language_server</code></td></tr>
 <tr><td>adl</td><td>✓</td><td>✓</td><td>✓</td><td></td></tr>
 <tr><td>agda</td><td>✓</td><td></td><td></td><td></td></tr>
 <tr><td>astro</td><td>✓</td><td></td><td></td><td></td></tr>
@@ -1221,6 +1229,7 @@ Languages</a> guide for more language configuration information.</p>
 <tr><td>gas</td><td>✓</td><td>✓</td><td></td><td></td></tr>
 <tr><td>gdscript</td><td>✓</td><td>✓</td><td>✓</td><td></td></tr>
 <tr><td>gemini</td><td>✓</td><td></td><td></td><td></td></tr>
+<tr><td>gherkin</td><td>✓</td><td></td><td></td><td></td></tr>
 <tr><td>git-attributes</td><td>✓</td><td></td><td></td><td></td></tr>
 <tr><td>git-commit</td><td>✓</td><td>✓</td><td></td><td></td></tr>
 <tr><td>git-config</td><td>✓</td><td></td><td></td><td></td></tr>
@@ -1260,6 +1269,7 @@ Languages</a> guide for more language configuration information.</p>
 <tr><td>javascript</td><td>✓</td><td>✓</td><td>✓</td><td><code>typescript-language-server</code></td></tr>
 <tr><td>jinja</td><td>✓</td><td></td><td></td><td></td></tr>
 <tr><td>jjdescription</td><td>✓</td><td></td><td></td><td></td></tr>
+<tr><td>jq</td><td>✓</td><td>✓</td><td></td><td><code>jq-lsp</code></td></tr>
 <tr><td>jsdoc</td><td>✓</td><td></td><td></td><td></td></tr>
 <tr><td>json</td><td>✓</td><td>✓</td><td>✓</td><td><code>vscode-json-language-server</code></td></tr>
 <tr><td>json5</td><td>✓</td><td></td><td></td><td></td></tr>
@@ -1288,7 +1298,7 @@ Languages</a> guide for more language configuration information.</p>
 <tr><td>markdown.inline</td><td>✓</td><td></td><td></td><td></td></tr>
 <tr><td>matlab</td><td>✓</td><td>✓</td><td>✓</td><td></td></tr>
 <tr><td>mermaid</td><td>✓</td><td></td><td></td><td></td></tr>
-<tr><td>meson</td><td>✓</td><td></td><td>✓</td><td></td></tr>
+<tr><td>meson</td><td>✓</td><td></td><td>✓</td><td><code>mesonlsp</code></td></tr>
 <tr><td>mint</td><td></td><td></td><td></td><td><code>mint</code></td></tr>
 <tr><td>mojo</td><td>✓</td><td>✓</td><td>✓</td><td><code>mojo-lsp-server</code></td></tr>
 <tr><td>move</td><td>✓</td><td></td><td></td><td></td></tr>
@@ -1296,7 +1306,7 @@ Languages</a> guide for more language configuration information.</p>
 <tr><td>nasm</td><td>✓</td><td>✓</td><td></td><td></td></tr>
 <tr><td>nickel</td><td>✓</td><td></td><td>✓</td><td><code>nls</code></td></tr>
 <tr><td>nim</td><td>✓</td><td>✓</td><td>✓</td><td><code>nimlangserver</code></td></tr>
-<tr><td>nix</td><td>✓</td><td>✓</td><td></td><td><code>nil</code></td></tr>
+<tr><td>nix</td><td>✓</td><td>✓</td><td></td><td><code>nil</code>, <code>nixd</code></td></tr>
 <tr><td>nu</td><td>✓</td><td></td><td></td><td><code>nu</code></td></tr>
 <tr><td>nunjucks</td><td>✓</td><td></td><td></td><td></td></tr>
 <tr><td>ocaml</td><td>✓</td><td></td><td>✓</td><td><code>ocamllsp</code></td></tr>
@@ -1362,12 +1372,14 @@ Languages</a> guide for more language configuration information.</p>
 <tr><td>tcl</td><td>✓</td><td></td><td>✓</td><td></td></tr>
 <tr><td>templ</td><td>✓</td><td></td><td></td><td><code>templ</code></td></tr>
 <tr><td>tfvars</td><td>✓</td><td></td><td>✓</td><td><code>terraform-ls</code></td></tr>
+<tr><td>thrift</td><td>✓</td><td></td><td></td><td></td></tr>
 <tr><td>todotxt</td><td>✓</td><td></td><td></td><td></td></tr>
 <tr><td>toml</td><td>✓</td><td>✓</td><td></td><td><code>taplo</code></td></tr>
 <tr><td>tsq</td><td>✓</td><td></td><td></td><td></td></tr>
 <tr><td>tsx</td><td>✓</td><td>✓</td><td>✓</td><td><code>typescript-language-server</code></td></tr>
 <tr><td>twig</td><td>✓</td><td></td><td></td><td></td></tr>
 <tr><td>typescript</td><td>✓</td><td>✓</td><td>✓</td><td><code>typescript-language-server</code></td></tr>
+<tr><td>typespec</td><td>✓</td><td>✓</td><td>✓</td><td><code>tsp-server</code></td></tr>
 <tr><td>typst</td><td>✓</td><td></td><td></td><td><code>tinymist</code>, <code>typst-lsp</code></td></tr>
 <tr><td>ungrammar</td><td>✓</td><td></td><td></td><td></td></tr>
 <tr><td>unison</td><td>✓</td><td></td><td>✓</td><td></td></tr>
@@ -2257,8 +2269,23 @@ t = ":run-shell-command cargo test"
 </tbody></table>
 </div>
 <p>Keys can be disabled by binding them to the <code>no_op</code> command.</p>
-<p>A list of commands is available in the <a href="https://docs.helix-editor.com/keymap.html">Keymap</a> documentation
-and in the source code at <a href="https://github.com/helix-editor/helix/blob/master/helix-term/src/commands.rs"><code>helix-term/src/commands.rs</code></a> at the invocation of <code>static_commands!</code> macro and the <code>TypableCommandList</code>.</p>
+<h2 id="commands-1"><a class="header" href="#commands-1">Commands</a></h2>
+<p>There are three kinds of commands that can be used in keymaps:</p>
+<ul>
+<li>Static commands: commands like <code>move_char_right</code> which are usually bound to
+keys and used for movement and editing. A list of static commands is
+available in the <a href="./keymap.html">Keymap</a> documentation and in the source code
+in <a href="https://github.com/helix-editor/helix/blob/master/helix-term/src/commands.rs"><code>helix-term/src/commands.rs</code></a>
+at the invocation of <code>static_commands!</code> macro and the <code>TypableCommandList</code>.</li>
+<li>Typable commands: commands that can be executed from command mode (<code>:</code>), for
+example <code>:write!</code>. See the <a href="./commands.html">Commands</a> documentation for a
+list of available typeable commands.</li>
+<li>Macros: sequences of keys that are executed in order. These keybindings
+start with <code>@</code> and then list any number of keys to be executed. For example
+<code>@miw</code> can be used to select the surrounding word. For now, macro keybindings
+are not allowed in keybinding sequences due to limitations in the way that
+command sequences are executed.</li>
+</ul>
 <div style="break-before: page; page-break-before: always;"></div><h2 id="languages"><a class="header" href="#languages">Languages</a></h2>
 <p>Language-specific settings and settings for language servers are configured
 in <code>languages.toml</code> files.</p>
