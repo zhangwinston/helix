@@ -1470,6 +1470,8 @@ See the documentation page on <a href="./pickers.html">pickers</a> for more info
 <tr><td><code>command_palette</code></td><td>Open command palette</td><td>normal: <code>&lt;space&gt;?</code>, select: <code>&lt;space&gt;?</code></td></tr>
 <tr><td><code>goto_word</code></td><td>Jump to a two-character label</td><td>normal: <code>gw</code></td></tr>
 <tr><td><code>extend_to_word</code></td><td>Extend to a two-character label</td><td>select: <code>gw</code></td></tr>
+<tr><td><code>goto_next_tabstop</code></td><td>goto next snippet placeholder</td><td></td></tr>
+<tr><td><code>goto_prev_tabstop</code></td><td>goto next snippet placeholder</td><td></td></tr>
 </tbody></table>
 </div><div style="break-before: page; page-break-before: always;"></div><h2 id="language-support"><a class="header" href="#language-support">Language Support</a></h2>
 <p>The following languages and Language Servers are supported. To use
@@ -1594,6 +1596,7 @@ Languages</a> guide for more language configuration information.</p>
 <tr><td>kdl</td><td>✓</td><td>✓</td><td>✓</td><td></td></tr>
 <tr><td>koka</td><td>✓</td><td></td><td>✓</td><td><code>koka</code></td></tr>
 <tr><td>kotlin</td><td>✓</td><td></td><td></td><td><code>kotlin-language-server</code></td></tr>
+<tr><td>koto</td><td>✓</td><td>✓</td><td>✓</td><td><code>koto-ls</code></td></tr>
 <tr><td>latex</td><td>✓</td><td>✓</td><td></td><td><code>texlab</code></td></tr>
 <tr><td>ld</td><td>✓</td><td></td><td>✓</td><td></td></tr>
 <tr><td>ldif</td><td>✓</td><td></td><td></td><td></td></tr>
@@ -1625,7 +1628,7 @@ Languages</a> guide for more language configuration information.</p>
 <tr><td>nunjucks</td><td>✓</td><td></td><td></td><td></td></tr>
 <tr><td>ocaml</td><td>✓</td><td></td><td>✓</td><td><code>ocamllsp</code></td></tr>
 <tr><td>ocaml-interface</td><td>✓</td><td></td><td></td><td><code>ocamllsp</code></td></tr>
-<tr><td>odin</td><td>✓</td><td></td><td>✓</td><td><code>ols</code></td></tr>
+<tr><td>odin</td><td>✓</td><td>✓</td><td>✓</td><td><code>ols</code></td></tr>
 <tr><td>ohm</td><td>✓</td><td>✓</td><td>✓</td><td></td></tr>
 <tr><td>opencl</td><td>✓</td><td>✓</td><td>✓</td><td><code>clangd</code></td></tr>
 <tr><td>openscad</td><td>✓</td><td></td><td></td><td><code>openscad-lsp</code></td></tr>
@@ -2122,6 +2125,7 @@ S-tab = "extend_parent_node_start"
 <tr><td><code>max-diagnostics</code></td><td>Maximum number of diagnostics to render inline for a given line</td><td><code>10</code></td></tr>
 </tbody></table>
 </div>
+<p>The allowed values for <code>cursor-line</code> and <code>other-lines</code> are: <code>error</code>, <code>warning</code>, <code>info</code>, <code>hint</code>.</p>
 <p>The (first) diagnostic with the highest severity that is not shown inline is rendered at the end of the line (as long as its severity is higher than the <code>end-of-line-diagnostics</code> config option):</p>
 <pre><code>fn main() {
   let baz = 1;
@@ -2513,6 +2517,7 @@ berry = "#2A2A4D"
 <tr><td><code>ui.text.focus</code></td><td>The currently selected line in the picker</td></tr>
 <tr><td><code>ui.text.inactive</code></td><td>Same as <code>ui.text</code> but when the text is inactive (e.g. suggestions)</td></tr>
 <tr><td><code>ui.text.info</code></td><td>The key: command text in <code>ui.popup.info</code> boxes</td></tr>
+<tr><td><code>ui.text.directory</code></td><td>Directory names in prompt completion</td></tr>
 <tr><td><code>ui.virtual.ruler</code></td><td>Ruler columns (see the <a href="./configuration.html#editor-section"><code>editor.rulers</code> config</a>)</td></tr>
 <tr><td><code>ui.virtual.whitespace</code></td><td>Visible whitespace characters</td></tr>
 <tr><td><code>ui.virtual.indent-guide</code></td><td>Vertical indent width guides</td></tr>
@@ -2625,7 +2630,6 @@ Cmd-s = ":write" # Cmd or Win or Meta and 's' to write
 <tr><td>Backspace</td><td><code>"backspace"</code></td></tr>
 <tr><td>Space</td><td><code>"space"</code></td></tr>
 <tr><td>Return/Enter</td><td><code>"ret"</code></td></tr>
-<tr><td>-</td><td><code>"minus"</code></td></tr>
 <tr><td>Left</td><td><code>"left"</code></td></tr>
 <tr><td>Right</td><td><code>"right"</code></td></tr>
 <tr><td>Up</td><td><code>"up"</code></td></tr>
@@ -2642,6 +2646,13 @@ Cmd-s = ":write" # Cmd or Win or Meta and 's' to write
 </tbody></table>
 </div>
 <p>Keys can be disabled by binding them to the <code>no_op</code> command.</p>
+<p>All other keys such as <code>?</code>, <code>!</code>, <code>-</code> etc. can be used literally:</p>
+<pre><code class="language-toml">[keys.normal]
+"?" = ":write"
+"!" = ":write"
+"-" = ":write"
+</code></pre>
+<p>Note: <code>-</code> can't be used when combined with a modifier, for example <code>Alt</code> + <code>-</code> should be written as <code>A-minus</code>. <code>A--</code> is not accepted.</p>
 <div style="break-before: page; page-break-before: always;"></div><h2 id="languages"><a class="header" href="#languages">Languages</a></h2>
 <p>Language-specific settings and settings for language servers are configured
 in <code>languages.toml</code> files.</p>
@@ -2697,7 +2708,7 @@ language-servers = [ "mylang-lsp" ]
 <tr><td><code>shebangs</code></td><td>The interpreters from the shebang line, for example <code>["sh", "bash"]</code></td></tr>
 <tr><td><code>roots</code></td><td>A set of marker files to look for when trying to find the workspace root. For example <code>Cargo.lock</code>, <code>yarn.lock</code></td></tr>
 <tr><td><code>auto-format</code></td><td>Whether to autoformat this language when saving</td></tr>
-<tr><td><code>diagnostic-severity</code></td><td>Minimal severity of diagnostic for it to be displayed. (Allowed values: <code>Error</code>, <code>Warning</code>, <code>Info</code>, <code>Hint</code>)</td></tr>
+<tr><td><code>diagnostic-severity</code></td><td>Minimal severity of diagnostic for it to be displayed. (Allowed values: <code>error</code>, <code>warning</code>, <code>info</code>, <code>hint</code>)</td></tr>
 <tr><td><code>comment-tokens</code></td><td>The tokens to use as a comment token, either a single token <code>"//"</code> or an array <code>["//", "///", "//!"]</code> (the first token will be used for commenting). Also configurable as <code>comment-token</code> for backwards compatibility</td></tr>
 <tr><td><code>block-comment-tokens</code></td><td>The start and end tokens for a multiline comment either an array or single table of <code>{ start = "/*", end = "*/"}</code>. The first set of tokens will be used for commenting, any pairs in the array can be uncommented</td></tr>
 <tr><td><code>indent</code></td><td>The indent to use. Has sub keys <code>unit</code> (the text inserted into the document when indenting; usually set to N spaces or <code>"\t"</code> for tabs) and <code>tab-width</code> (the number of spaces rendered for a tab)</td></tr>
