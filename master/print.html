@@ -177,7 +177,7 @@ Note that:</p>
 <li>
 <p>To take full advantage of Helix, install the language servers for your
 preferred programming languages. See the
-<a href="https://github.com/helix-editor/helix/wiki/How-to-install-the-default-language-servers">wiki</a>
+<a href="https://github.com/helix-editor/helix/wiki/Language-Server-Configurations">wiki</a>
 for instructions.</p>
 </li>
 </ul>
@@ -370,7 +370,7 @@ your <code>~/.bashrc</code> or equivalent:</p>
 <p>Either set the <code>HELIX_RUNTIME</code> environment variable to point to the runtime files using the Windows setting (search for
 <code>Edit environment variables for your account</code>) or use the <code>setx</code> command in
 Cmd:</p>
-<pre><code class="language-sh">setx HELIX_RUNTIME "%userprofile%\source\repos\helix\runtime"
+<pre><code class="language-sh">setx HELIX_RUNTIME "%userprofile%\src\helix\runtime"
 </code></pre>
 <blockquote>
 <p>💡 <code>%userprofile%</code> resolves to your user directory like
@@ -1578,10 +1578,11 @@ Languages</a> guide for more language configuration information.</p>
 <tr><td>forth</td><td>✓</td><td></td><td></td><td><code>forth-lsp</code></td></tr>
 <tr><td>fortran</td><td>✓</td><td></td><td>✓</td><td><code>fortls</code></td></tr>
 <tr><td>fsharp</td><td>✓</td><td></td><td></td><td><code>fsautocomplete</code></td></tr>
-<tr><td>gas</td><td>✓</td><td>✓</td><td></td><td></td></tr>
+<tr><td>gas</td><td>✓</td><td>✓</td><td></td><td><code>asm-lsp</code></td></tr>
 <tr><td>gdscript</td><td>✓</td><td>✓</td><td>✓</td><td></td></tr>
 <tr><td>gemini</td><td>✓</td><td></td><td></td><td></td></tr>
 <tr><td>gherkin</td><td>✓</td><td></td><td></td><td></td></tr>
+<tr><td>ghostty</td><td>✓</td><td></td><td></td><td></td></tr>
 <tr><td>git-attributes</td><td>✓</td><td></td><td></td><td></td></tr>
 <tr><td>git-commit</td><td>✓</td><td>✓</td><td></td><td></td></tr>
 <tr><td>git-config</td><td>✓</td><td>✓</td><td></td><td></td></tr>
@@ -1658,7 +1659,7 @@ Languages</a> guide for more language configuration information.</p>
 <tr><td>mojo</td><td>✓</td><td>✓</td><td>✓</td><td><code>magic</code></td></tr>
 <tr><td>move</td><td>✓</td><td></td><td></td><td></td></tr>
 <tr><td>msbuild</td><td>✓</td><td></td><td>✓</td><td></td></tr>
-<tr><td>nasm</td><td>✓</td><td>✓</td><td></td><td></td></tr>
+<tr><td>nasm</td><td>✓</td><td>✓</td><td></td><td><code>asm-lsp</code></td></tr>
 <tr><td>nestedtext</td><td>✓</td><td>✓</td><td>✓</td><td></td></tr>
 <tr><td>nginx</td><td>✓</td><td></td><td></td><td></td></tr>
 <tr><td>nickel</td><td>✓</td><td></td><td>✓</td><td><code>nls</code></td></tr>
