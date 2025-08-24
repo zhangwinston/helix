@@ -64,6 +64,21 @@
 | `clipboard-provider` | Which API to use for clipboard interaction. One of `pasteboard` (MacOS), `wayland`, `x-clip`, `x-sel`, `win-32-yank`, `termux`, `tmux`, `windows`, `termcode`, `none`, or a custom command set. | Platform and environment specific. |
 | `editor-config` | Whether to read settings from [EditorConfig](https://editorconfig.org) files | `true` |
 | `rainbow-brackets` | Whether to render rainbow colors for matching brackets. Requires tree-sitter `rainbows.scm` queries for the language. | `false` |
+| `ime-context-switching` | Enable automatic IME (Input Method Editor) switching. When enabled, IME is automatically switched off when leaving insert mode or when the cursor moves to a non-comment/string area. The previous IME state is restored on re-entering insert mode or moving back to a comment/string. | `true` |
+| `ime-context-triggers` | A list of syntax scopes that will automatically activate the IME in insert mode. This requires `ime-context-switching` to be `true`. You can find scope names for the current language by running the `:log-scopes` command. | `["comment", "string"]` |
+
+This setting can also be configured on a per-language basis in your `languages.toml` file. A per-language `ime-context-triggers` array **will completely replace** the global one, not merge with it. This allows you to precisely control IME behavior for each language.
+
+For example, the global default is `["comment", "string"]`. However, in Go, struct tags are string literals that contain code-like directives where IME is not desired. To handle this, you could set the following in `languages.toml` to have IME activate *only* for comments in Go files:
+
+```toml
+# In languages.toml
+[[language]]
+name = "go"
+# This list REPLACES the global default. For Go files, IME will now only
+# be triggered for comments, and no longer for strings.
+ime-context-triggers = ["comment"]
+```
 
 ### `[editor.clipboard-provider]` Section
 

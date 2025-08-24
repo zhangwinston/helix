@@ -75,6 +75,8 @@ These configuration keys are available:
 | `workspace-lsp-roots`     | Directories relative to the workspace root that are treated as LSP roots. Should only be set in `.helix/config.toml`. Overwrites the setting of the same name in `config.toml` if set. |
 | `persistent-diagnostic-sources` | An array of LSP diagnostic sources assumed unchanged when the language server resends the same set of diagnostics. Helix can track the position for these diagnostics internally instead. Useful for diagnostics that are recomputed on save.
 | `rainbow-brackets` | Overrides the `editor.rainbow-brackets` config key for the language |
+| `auto-ime-allscopes` | Default set to false, when set to `true`, Helix will treat all scopes of the entire file as an IME-active zone in insert mode. |
+| `auto-ime-scopes` | This option specifies a list of Tree-sitter syntax scopes, these scopes will be treated as IME-ative zone in insert mode. |
 
 ### File-type detection and the `file-types` key
 
@@ -113,6 +115,70 @@ argument to the formatter:
 ```toml
 formatter = { command = "mylang-formatter" , args = ["--stdin", "--stdin-filename", "%{buffer_name}"] }
 ```
+
+### Automatic Input Method Editor (IME) Switching
+
+Helix can automatically switch your input method editor (IME) state (e.g., between English and a CJK input method) based on the syntax context of your code. This helps reduce manual toggling when moving between writing code and natural language text (like comments or strings).
+
+This feature is enabled globally by the `editor.ime-context-switching` setting (if it exists, otherwise it's implicitly always on if configured per language).
+
+#### Configuration
+
+You can configure IME switching behavior per language in your `languages.toml` file.
+
+##### `auto-ime-allscopes` (boolean)
+
+When set to `true`, Helix will treat the entire file as an IME-active zone in insert mode. This is ideal for files that primarily contain natural language text, such as Markdown documents or Git commit messages.
+
+**Default:** `false` (unless automatically applied by smart defaults, see below).
+
+Example for Markdown:
+
+```toml
+[[language]]
+name = "markdown"
+auto-ime-allscopes = true
+```
+
+##### `auto-ime-scopes` (array of strings)
+
+This option specifies a list of Tree-sitter syntax scopes that, when the cursor is inside them in insert mode, will trigger the IME to become active. When the cursor leaves these scopes, the IME will revert to its "outside" state.
+
+**Default:** `[]` (unless automatically applied by smart defaults, see below).
+
+Example for Rust, activating IME in strings and comments:
+
+```toml
+[[language]]
+name = "rust"
+auto-ime-scopes = ["string", "comment"]
+```
+
+**Note:** If `auto-ime-allscopes` is set to `true` for a language, `auto-ime-scopes` will be ignored for that language.
+
+#### Smart Defaults (Zero-Configuration Experience)
+
+To provide a seamless experience, Helix applies intelligent default IME switching configurations for common file types, even if you don't explicitly configure them in your `languages.toml`. Your explicit configurations will always override these defaults.
+
+*   **For text-heavy files:**
+    Languages with `name` set to `"markdown"`, `"git-commit"`, or `"text"` will automatically have `auto-ime-allscopes = true` applied. This means you can start typing in your native language immediately in these files without any setup.
+
+*   **For code-heavy files:**
+    Most programming languages (identified by the presence of a `comment-token` in their configuration) will automatically have `auto-ime-scopes = ["string", "comment"]` applied. This ensures that you can easily type comments and string literals in your native language.
+
+**Example:** You don't need to add `auto-ime-scopes = ["string", "comment"]` for Rust or Python; it will work out of the box. Similarly, Markdown files will automatically enable IME for the entire file.
+
+#### How IME Switching Works
+
+Helix's IME switching is based on **state restoration**, not forced activation.
+
+*   When you enter an IME-active zone (defined by `auto-ime-allscopes` or `auto-ime-scopes`), Helix will restore the IME to the state it was in the *last time* you were in such a zone.
+*   When you leave an IME-active zone and enter a "code" zone, Helix will restore the IME to the state it was in the *last time* you were in a "code" zone.
+*   If you manually toggle your IME (e.g., press `Shift` to switch between English and Chinese) while in a specific zone, Helix will remember that preference for that zone type for future automatic switching.
+
+#### Handling Un-parsable Files
+
+Files that Helix cannot parse (e.g., due to a missing Tree-sitter grammar or an unrecognized file type) are treated as if `auto-ime-allscopes = true` was set. This ensures that you can always type in your native language in such files, as they are effectively plain text.
 
 ## Language Server configuration
 
