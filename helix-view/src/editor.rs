@@ -14,8 +14,8 @@ use crate::{
     tree::{self, Tree},
     Document, DocumentId, View, ViewId,
 };
+use crate::{events::ModeSwitch, ime, ime::ImeManager};
 use helix_event::dispatch;
-use crate::{ime, ime::ImeManager, events::ModeSwitch};
 
 use helix_vcs::DiffProviderRegistry;
 
@@ -383,6 +383,17 @@ pub struct Config {
     pub editor_config: bool,
     /// Whether to render rainbow colors for matching brackets. Defaults to `false`.
     pub rainbow_brackets: bool,
+    /// Whether to enable automatic IME switching based on syntax context.
+    #[serde(default)]
+    pub ime_context_switching: bool,
+    /// A list of LSP semantic token types that should trigger the IME.
+    /// For example: ["comment", "string"].
+    #[serde(default = "default_ime_context_triggers")]
+    pub ime_context_triggers: Vec<String>,
+}
+
+fn default_ime_context_triggers() -> Vec<String> {
+    vec!["comment".to_string(), "string".to_string()]
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize, Eq, PartialOrd, Ord)]
@@ -1063,6 +1074,8 @@ impl Default for Config {
             clipboard_provider: ClipboardProvider::default(),
             editor_config: true,
             rainbow_brackets: false,
+            ime_context_switching: false,
+            ime_context_triggers: default_ime_context_triggers(),
         }
     }
 }
@@ -1093,16 +1106,53 @@ use futures_util::stream::{Flatten, Once};
 
 type Diagnostics = BTreeMap<Uri, Vec<(lsp::Diagnostic, DiagnosticProvider)>>;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SyntaxZone {
+    Code,
+    Trigger,
+}
+
+/// Determines the syntax context (zone) at a given position in a document.
+fn syntax_zone_at_pos(doc: &Document, pos: Position, config: &Config) -> SyntaxZone {
+    let Some(syntax) = doc.syntax() else {
+        return SyntaxZone::Trigger;
+    };
+
+    let text = doc.text();
+    let char_offset = text.line_to_char(pos.row) + pos.col;
+    let byte_offset = text.char_to_byte(char_offset);
+
+    let Some(node) = syntax
+        .tree()
+        .root_node()
+        .descendant_for_byte_range(byte_offset as u32, byte_offset as u32)
+    else {
+        return SyntaxZone::Trigger;
+    };
+
+    let node_kind = node.kind();
+    // Check against user-configured triggers
+    for trigger in &config.ime_context_triggers {
+        if node_kind.contains(trigger) {
+            return SyntaxZone::Trigger;
+        }
+    }
+
+    SyntaxZone::Code
+}
+
 pub struct Editor {
     /// Current editing mode.
     pub mode: Mode,
     pub ime_manager: Box<dyn ImeManager>, // ADDED: Made public
+    /// Tracks if the IME should be active based on the current syntax context.
+    ime_context_active: bool,
     pub tree: Tree,
     pub next_document_id: DocumentId,
     pub documents: BTreeMap<DocumentId, Document>,
     pub ime_states: HashMap<ViewId, bool>, // ADDED: IME states per view
 
-    // We Flatten<> to resolve the inner DocumentSavedEventFuture. For that we need a stream of streams, hence the Once<>.
+    // We Flatten<> to resolve the inner DocumentSavedEventFuture. For that we need a stream of streams, hence the Once<>./
     // https://stackoverflow.com/a/66875668
     pub saves: HashMap<DocumentId, UnboundedSender<Once<DocumentSavedEventFuture>>>,
     pub save_queue: SelectAll<Flatten<UnboundedReceiverStream<Once<DocumentSavedEventFuture>>>>,
@@ -1131,6 +1181,7 @@ pub struct Editor {
 
     /// The primary Selection prior to starting a goto_line_number preview. This is
     /// restored when the preview is aborted, or added to the jumplist when it is
+
     /// confirmed.
     pub last_selection: Option<Selection>,
 
@@ -1251,6 +1302,7 @@ impl Editor {
         Self {
             mode: Mode::Normal,
             ime_manager,
+            ime_context_active: true,
             tree: Tree::new(area),
             next_document_id: DocumentId::default(),
             documents: BTreeMap::new(),
@@ -2173,7 +2225,7 @@ impl Editor {
             ),
         )
         .await
-        .map(|_| ())
+        .map(|_| (()))
     }
 
     pub async fn wait_event(&mut self) -> EditorEvent {
@@ -2239,32 +2291,103 @@ impl Editor {
         Ok(())
     }
 
-
-
     pub fn enter_normal_mode(&mut self) {
         self.set_mode(Mode::Normal);
     }
 
+    pub fn update_ime_state(&mut self) {
+        let config = self.config();
+        // If the feature is disabled, or we are not in insert mode, do nothing.
+        if !config.ime_context_switching || self.mode != Mode::Insert {
+            return;
+        }
+
+        let (view, doc) = current!(self);
+
+        // If there is no syntax tree, there's no context to switch on.
+        // In this case, we should not interfere with the mode-based IME state.
+        // The state set by `set_mode` should be final for this file type.
+        if doc.syntax().is_none() {
+            return;
+        }
+
+        let view_id = view.id;
+
+        // Check the position of every cursor, if any are in a trigger zone, enable IME
+        let should_be_enabled = doc.selection(view_id).iter().any(|s| {
+            let pos_char = s.cursor(doc.text().slice(..));
+            let line = doc.text().char_to_line(pos_char);
+            let col = pos_char - doc.text().line_to_char(line);
+            let pos = Position { row: line, col };
+            syntax_zone_at_pos(doc, pos, &config) == SyntaxZone::Trigger
+        });
+
+        // If the desired state is different from the current syntax-aware state, then act.
+        if should_be_enabled != self.ime_context_active {
+            if should_be_enabled {
+                // Entering a syntax zone where IME should be on. Restore its last known state.
+                let last_user_status = self.ime_states.get(&view_id).copied();
+                self.ime_manager.enable_with_status(last_user_status);
+            } else {
+                // Entering a syntax zone where IME should be off. Disable it and save its state.
+                let current_ime_status = self.ime_manager.disable_and_get_status();
+                self.ime_states.insert(view_id, current_ime_status);
+            }
+            self.ime_context_active = should_be_enabled;
+        }
+    }
+
     pub fn set_mode(&mut self, new_mode: Mode) {
         use helix_core::graphemes;
-        let view_id = self.tree.focus;
         let old_mode = self.mode;
         if old_mode == new_mode {
             return;
         }
 
         self.mode = new_mode;
+        let (view, doc) = current_ref!(self);
+        let view_id = view.id;
+        let config = self.config();
 
-        // Only change IME state if the mode is changing to or from Insert
-        if new_mode == Mode::Insert {
-            // Entering Insert mode, restore IME
-            let ime_status = self.ime_states.get(&view_id).copied();
-            self.ime_manager.enable_with_status(ime_status);
-        } else if old_mode == Mode::Insert {
-            // Leaving Insert mode (to any other mode), disable IME and save state
-            let prev_ime_status = self.ime_manager.disable_and_get_status();
-            self.ime_states.insert(view_id, prev_ime_status);
+        // Only apply smart IME logic if the feature is enabled.
+        if config.ime_context_switching {
+            // Determine if the primary cursor is in a trigger zone.
+            // This check is relevant for both entering and leaving insert mode.
+            let primary_selection = doc.selection(view_id).primary();
+            let pos_char = primary_selection.cursor(doc.text().slice(..));
+            let line = doc.text().char_to_line(pos_char);
+            let col = pos_char - doc.text().line_to_char(line);
+            let pos = Position { row: line, col };
+            let in_trigger_zone = syntax_zone_at_pos(doc, pos, &config) == SyntaxZone::Trigger;
+
+            if new_mode == Mode::Insert && old_mode != Mode::Insert {
+                // ENTERING Insert mode
+                if in_trigger_zone {
+                    // If entering a trigger zone, restore the last known state.
+                    let last_user_status = self.ime_states.get(&view_id).copied();
+                    self.ime_manager.enable_with_status(last_user_status);
+                    self.ime_context_active = last_user_status.unwrap_or(false);
+                } else {
+                    // If entering a non-trigger zone, ensure IME is off.
+                    // We don't need to save state, just disable.
+                    self.ime_manager.disable_and_get_status();
+                    self.ime_context_active = false;
+                }
+            } else if new_mode != Mode::Insert && old_mode == Mode::Insert {
+                // LEAVING Insert mode
+                // First, ensure IME is disabled since we are no longer in insert mode.
+                let current_ime_status = self.ime_manager.disable_and_get_status();
+
+                // Only save the IME state if we were in a trigger zone.
+                // This prevents overwriting the "string/comment" IME state with the
+                // "code" IME state (which is usually off).
+                if in_trigger_zone {
+                    self.ime_states.insert(view_id, current_ime_status);
+                }
+                self.ime_context_active = false;
+            }
         }
+
         // Perform other mode-specific actions
         if new_mode == Mode::Normal {
             let (view, doc) = current!(self);
@@ -2281,7 +2404,7 @@ impl Editor {
 
                     Range::new(range.from(), head)
                 });
-        
+
                 doc.set_selection(view.id, selection);
                 doc.restore_cursor = false;
             }
@@ -2289,7 +2412,7 @@ impl Editor {
             doc.append_changes_to_history(view);
             doc.selections();
             //doc.ensure_primary_selection_is_valid();
-            doc.reset_all_inlay_hints();            
+            doc.reset_all_inlay_hints();
         }
 
         helix_event::dispatch(ModeSwitch {
@@ -2298,7 +2421,6 @@ impl Editor {
             editor: self,
         });
     }
-
 
     pub fn current_stack_frame(&self) -> Option<&dap::StackFrame> {
         self.debug_adapters.current_stack_frame()
