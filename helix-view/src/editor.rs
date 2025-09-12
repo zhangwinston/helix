@@ -2466,9 +2466,9 @@ impl Editor {
                 // ENTERING Insert mode
                 if in_trigger_zone {
                     // If entering a trigger zone, restore the last known state.
-                    let last_user_status = self.ime_states.get(&view_id).copied();
-                    self.ime_manager.enable_with_status(last_user_status);
-                    self.ime_context_active = last_user_status.unwrap_or(false);
+                    let last_user_status = self.ime_states.get(&view_id).copied().unwrap_or(true);
+                    self.ime_manager.enable_with_status(Some(last_user_status));
+                    self.ime_context_active = last_user_status;
                 } else {
                     // If entering a non-trigger zone, ensure IME is off.
                     // We don't need to save state, just disable.
@@ -2481,8 +2481,8 @@ impl Editor {
                 let current_ime_status = self.ime_manager.disable_and_get_status();
 
                 // Only save the IME state if we were in a trigger zone.
-                // This prevents overwriting the "string/comment" IME state with the
-                // "code" IME state (which is usually off).
+                // This prevents overwriting the string or comment IME state with the
+                // code zone IME state (which is usually off).
                 if in_trigger_zone {
                     self.ime_states.insert(view_id, current_ime_status);
                 }

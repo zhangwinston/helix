@@ -1,7 +1,7 @@
 use super::ImeManager;
-use core_foundation::base::{TCFType, ToVoid};
+use core_foundation::base::TCFType;
 use core_foundation::string::{CFString, CFStringRef};
-use core_services::kch;
+
 use core_services::tis::{
     kTISPropertyInputSourceID, kTISPropertyInputSourceIsSelectCapable,
     TISCopyCurrentKeyboardInputSource, TISGetInputSourceProperty, TISSelectInputSource,
@@ -51,7 +51,7 @@ impl ImeManager for MacosImeManager {
 
             let target_id = CFString::new(US_KEYBOARD_LAYOUT);
             let input_source = core_foundation::dictionary::CFDictionary::from_CFType_pairs(&[(
-                CFString::new(kch::kCTInputSourceID),
+                kTISPropertyInputSourceID,
                 target_id.as_CFType(),
             )]);
 
@@ -62,7 +62,7 @@ impl ImeManager for MacosImeManager {
 
     fn enable_with_status(&mut self, status: Option<bool>) {
         if let Some(true) = status {
-            if let Some(previous_id) = self.previous_input_source_id.take() {
+            if let Some(previous_id) = &self.previous_input_source_id {
                 unsafe {
                     let input_source =
                         core_foundation::dictionary::CFDictionary::from_CFType_pairs(&[(
