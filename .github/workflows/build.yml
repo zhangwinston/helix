@@ -3,7 +3,7 @@ on:
   pull_request:
   push:
     branches:
-      - ime_switch
+      - master
   merge_group:
   schedule:
     - cron: "00 01 * * *"

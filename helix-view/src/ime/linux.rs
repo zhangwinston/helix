@@ -9,7 +9,6 @@ enum ImeService {
 
 pub struct LinuxImeManager {
     service: ImeService,
-    previous_ime_status: Option<bool>,
 }
 
 impl LinuxImeManager {
@@ -36,10 +35,7 @@ impl LinuxImeManager {
             ImeService::None
         };
 
-        Self {
-            service,
-            previous_ime_status: None,
-        }
+        Self { service }
     }
 }
 
@@ -63,31 +59,26 @@ impl ImeManager for LinuxImeManager {
                 {
                     was_ime_enabled = active;
                 }
-                let _ = proxy.call_method("SetInputMethod", &("", OwnedObjectPath::from("/")));
+                let _ = proxy.call_method(
+                    "SetInputMethod",
+                    &("", OwnedObjectPath::from(zbus::zvariant::ObjectPath::try_from("/").unwrap())),
+                );
             }
             ImeService::None => (),
         }
-        self.previous_ime_status = Some(was_ime_enabled);
         was_ime_enabled
     }
 
     fn enable_with_status(&mut self, status: Option<bool>) {
         if let Some(true) = status {
-            if let Some(param) = self.previous_ime_status.take() {
-                if param {
-                    match &self.service {
-                        ImeService::IBus(proxy) => {
-                            let _ = proxy.call_method("FocusIn", &());
-                        }
-                        ImeService::Fcitx5(proxy) => {
-                            // Fcitx5 restoration is more complex, might need to store previous input method ID
-                            // For now, we just try to activate it generally.
-                            let _ = proxy
-                                .call_method("SetInputMethod", &("", OwnedObjectPath::from("/")));
-                        }
-                        ImeService::None => (),
-                    }
+            match &self.service {
+                ImeService::IBus(proxy) => {
+                    let _ = proxy.call_method("FocusIn", &());
                 }
+                ImeService::Fcitx5(proxy) => {
+                    let _ = proxy.call_method("FocusIn", &());
+                }
+                ImeService::None => (),
             }
         }
     }
