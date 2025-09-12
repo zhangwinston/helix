@@ -22,11 +22,25 @@ impl ImeManager for WindowsImeManager {
             }
 
             // Step 1: Get the current status without changing it
-            let current_status = unsafe { SendMessageA(ime_wnd, WM_IME_CONTROL, WPARAM(IMC_GETOPENSTATUS), LPARAM(0)) };
+            let current_status = unsafe {
+                SendMessageA(
+                    ime_wnd,
+                    WM_IME_CONTROL,
+                    WPARAM(IMC_GETOPENSTATUS),
+                    LPARAM(0),
+                )
+            };
             was_ime_enabled = current_status != LRESULT(0);
 
             // Step 2: Set the IME to closed
-            unsafe { SendMessageA(ime_wnd, WM_IME_CONTROL, WPARAM(IMC_SETOPENSTATUS as usize), LPARAM(0)) };
+            unsafe {
+                SendMessageA(
+                    ime_wnd,
+                    WM_IME_CONTROL,
+                    WPARAM(IMC_SETOPENSTATUS as usize),
+                    LPARAM(0),
+                )
+            };
         }
         was_ime_enabled
     }
@@ -39,9 +53,15 @@ impl ImeManager for WindowsImeManager {
                     return;
                 }
                 // Restore IME status based on the passed-in status
-                unsafe { SendMessageA(ime_wnd, WM_IME_CONTROL, WPARAM(IMC_SETOPENSTATUS as usize), LPARAM(should_enable as isize)) };
+                unsafe {
+                    SendMessageA(
+                        ime_wnd,
+                        WM_IME_CONTROL,
+                        WPARAM(IMC_SETOPENSTATUS as usize),
+                        LPARAM(should_enable as isize),
+                    )
+                };
             }
         }
     }
 }
-

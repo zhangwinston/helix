@@ -562,7 +562,7 @@ impl Syntax {
         self.inner.tree_for_byte_range(start, end)
     }
 
-        pub fn named_descendant_for_byte_range(&self, start: u32, end: u32) -> Option<Node<'_>> {
+    pub fn named_descendant_for_byte_range(&self, start: u32, end: u32) -> Option<Node<'_>> {
         self.inner.named_descendant_for_byte_range(start, end)
     }
 

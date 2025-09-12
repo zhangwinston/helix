@@ -17,27 +17,29 @@ impl LinuxImeManager {
         let service = if let Ok(connection) = Connection::session() {
             if let Ok(proxy) = zbus::blocking::Proxy::new(
                 &connection,
-                    "org.freedesktop.IBus",
+                "org.freedesktop.IBus",
                 "/org/freedesktop/IBus/InputContexts",
                 "org.freedesktop.IBus.InputContext",
-                ) {
-                    ImeService::IBus(proxy)
+            ) {
+                ImeService::IBus(proxy)
             } else if let Ok(proxy) = zbus::blocking::Proxy::new(
                 &connection,
-                    "org.fcitx.Fcitx5",
+                "org.fcitx.Fcitx5",
                 "/org/fcitx/Fcitx5/InputContext1",
                 "org.fcitx.Fcitx5.InputContext1",
-                ) {
-                    ImeService::Fcitx5(proxy)
+            ) {
+                ImeService::Fcitx5(proxy)
+            } else {
+                ImeService::None
             }
-            else {
-                    ImeService::None
-                }
         } else {
             ImeService::None
         };
 
-        Self { service, previous_ime_status: None }
+        Self {
+            service,
+            previous_ime_status: None,
+        }
     }
 }
 
@@ -46,13 +48,19 @@ impl ImeManager for LinuxImeManager {
         let mut was_ime_enabled = false;
         match &self.service {
             ImeService::IBus(proxy) => {
-                if let Ok(active) = proxy.call_method("IsActive", &()).and_then(|r| r.body().deserialize()) {
+                if let Ok(active) = proxy
+                    .call_method("IsActive", &())
+                    .and_then(|r| r.body().deserialize())
+                {
                     was_ime_enabled = active;
                 }
                 let _ = proxy.call_method("FocusOut", &());
             }
             ImeService::Fcitx5(proxy) => {
-                if let Ok(active) = proxy.call_method("IsActive", &()).and_then(|r| r.body().deserialize()) {
+                if let Ok(active) = proxy
+                    .call_method("IsActive", &())
+                    .and_then(|r| r.body().deserialize())
+                {
                     was_ime_enabled = active;
                 }
                 let _ = proxy.call_method("SetInputMethod", &("", OwnedObjectPath::from("/")));
@@ -67,19 +75,20 @@ impl ImeManager for LinuxImeManager {
         if let Some(true) = status {
             if let Some(param) = self.previous_ime_status.take() {
                 if param {
-        match &self.service {
-            ImeService::IBus(proxy) => {
+                    match &self.service {
+                        ImeService::IBus(proxy) => {
                             let _ = proxy.call_method("FocusIn", &());
-            }
-            ImeService::Fcitx5(proxy) => {
+                        }
+                        ImeService::Fcitx5(proxy) => {
                             // Fcitx5 restoration is more complex, might need to store previous input method ID
                             // For now, we just try to activate it generally.
-                            let _ = proxy.call_method("SetInputMethod", &("", OwnedObjectPath::from("/")));
+                            let _ = proxy
+                                .call_method("SetInputMethod", &("", OwnedObjectPath::from("/")));
+                        }
+                        ImeService::None => (),
+                    }
+                }
             }
-            ImeService::None => (),
-        }
-    }
-}
         }
     }
 }
