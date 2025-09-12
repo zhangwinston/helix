@@ -1,15 +1,14 @@
-
 //! A trait for managing the Input Method Editor (IME).
 //!
 //! This module provides a generic `ImeManager` trait to abstract away
 //! platform-specific details of controlling the IME state.
 
-#[cfg(target_os = "windows")]
-mod windows;
-#[cfg(target_os = "macos")]
-mod macos;
 #[cfg(target_os = "linux")]
 mod linux;
+#[cfg(target_os = "macos")]
+mod macos;
+#[cfg(target_os = "windows")]
+mod windows;
 
 /// A generic interface for managing the IME.
 pub trait ImeManager {

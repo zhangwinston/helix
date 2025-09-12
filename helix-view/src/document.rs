@@ -224,7 +224,6 @@ pub struct DocumentColorSwatches {
     pub color_swatches: Vec<InlineAnnotation>,
     pub colors: Vec<syntax::Highlight>,
     pub color_swatches_padding: Vec<InlineAnnotation>,
-
 }
 
 /// Inlay hints for a single `(Document, View)` combo.

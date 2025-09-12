@@ -73,10 +73,6 @@ pub fn align_view(doc: &mut Document, view: &View, align: Align) {
     doc.set_view_offset(view.id, view_offset);
 }
 
-
-
-
-
 pub mod ime;
 
 pub use document::Document;

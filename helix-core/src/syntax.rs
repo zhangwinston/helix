@@ -562,11 +562,7 @@ impl Syntax {
         self.inner.tree_for_byte_range(start, end)
     }
 
-<<<<<<< HEAD
     pub fn named_descendant_for_byte_range(&self, start: u32, end: u32) -> Option<Node<'_>> {
-=======
-        pub fn named_descendant_for_byte_range(&self, start: u32, end: u32) -> Option<Node<'_>> {
->>>>>>> da03d8e2 (switch chinese input method automatically while editor exit or enter insert mode)
         self.inner.named_descendant_for_byte_range(start, end)
     }
 

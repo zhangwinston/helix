@@ -2,7 +2,7 @@ use helix_core::{ChangeSet, Rope};
 use helix_event::events;
 use helix_lsp::LanguageServerId;
 
-use crate::{editor::Config, Document, DocumentId, Editor, ViewId, document::Mode};
+use crate::{document::Mode, editor::Config, Document, DocumentId, Editor, ViewId};
 
 events! {
     DocumentDidOpen<'a> {

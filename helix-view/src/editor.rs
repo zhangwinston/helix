@@ -14,8 +14,8 @@ use crate::{
     tree::{self, Tree},
     Document, DocumentId, View, ViewId,
 };
+use crate::{events::ModeSwitch, ime, ime::ImeManager};
 use helix_event::dispatch;
-use crate::{ime, ime::ImeManager, events::ModeSwitch};
 
 use helix_vcs::DiffProviderRegistry;
 
@@ -1182,8 +1182,8 @@ fn syntax_zone_at_pos(doc: &Document, pos: Position, _config: &Config) -> Syntax
     // If configured for whole-file, it's a trigger zone.
     //    (This also handles our smart default for "text", "markdown", etc.)
     if lang_config.auto_ime_allscopes {
-            return SyntaxZone::Trigger;
-        }
+        return SyntaxZone::Trigger;
+    }
 
     // 2. Check for scope-based triggers (`auto_ime_scopes`).
     // If we are supposed to check scopes, but there is no syntax tree,
@@ -2378,8 +2378,6 @@ impl Editor {
         Ok(())
     }
 
-
-
     pub fn enter_normal_mode(&mut self) {
         self.set_mode(Mode::Normal);
     }
@@ -2412,13 +2410,16 @@ impl Editor {
         // Check the position of the primary cursor to determine if the zone has changed
         let primary_selection = selection.primary();
         let pos_char = primary_selection.cursor(doc.text().slice(..));
-                    let line = doc.text().char_to_line(pos_char);
-                    let col = pos_char - doc.text().line_to_char(line);
-                    let pos = Position { row: line, col };
+        let line = doc.text().char_to_line(pos_char);
+        let col = pos_char - doc.text().line_to_char(line);
+        let pos = Position { row: line, col };
         let current_zone = syntax_zone_at_pos(doc, pos, &config);
 
         // Only update IME state if the zone has changed
-        let last_zone = self.ime_last_zone.entry(view_id).or_insert(SyntaxZone::Code);
+        let last_zone = self
+            .ime_last_zone
+            .entry(view_id)
+            .or_insert(SyntaxZone::Code);
         if current_zone != *last_zone {
             // Zone has changed, update IME state
             if current_zone == SyntaxZone::Trigger {
@@ -2505,7 +2506,7 @@ impl Editor {
 
                     Range::new(range.from(), head)
                 });
-        
+
                 doc.set_selection(view.id, selection);
                 doc.restore_cursor = false;
             }
@@ -2513,7 +2514,7 @@ impl Editor {
             doc.append_changes_to_history(view);
             doc.selections();
             //doc.ensure_primary_selection_is_valid();
-            doc.reset_all_inlay_hints();            
+            doc.reset_all_inlay_hints();
         }
         helix_event::dispatch(ModeSwitch {
             old_mode,
@@ -2521,7 +2522,6 @@ impl Editor {
             editor: self,
         });
     }
-
 
     pub fn current_stack_frame(&self) -> Option<&dap::StackFrame> {
         self.debug_adapters.current_stack_frame()
