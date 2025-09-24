@@ -429,6 +429,10 @@ pub struct Config {
     pub rainbow_brackets: bool,
     /// Whether to enable Kitty Keyboard Protocol
     pub kitty_keyboard_protocol: KittyKeyboardProtocolConfig,
+    /// A list of LSP semantic token types that should trigger the IME.
+    /// For example: ["comment", "string"].
+    #[serde(default = "default_ime_context_triggers")]
+    pub ime_context_triggers: Vec<String>,
 }
 
 #[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize, Clone, Copy)]
@@ -438,13 +442,6 @@ pub enum KittyKeyboardProtocolConfig {
     Auto,
     Disabled,
     Enabled,
-    /// Whether to enable automatic IME switching based on syntax context.
-    #[serde(default)]
-    pub ime_context_switching: bool,
-    /// A list of LSP semantic token types that should trigger the IME.
-    /// For example: ["comment", "string"].
-    #[serde(default = "default_ime_context_triggers")]
-    pub ime_context_triggers: Vec<String>,
 }
 
 fn default_ime_context_triggers() -> Vec<String> {
@@ -1131,7 +1128,6 @@ impl Default for Config {
             editor_config: true,
             rainbow_brackets: false,
             kitty_keyboard_protocol: Default::default(),
-            ime_context_switching: false,
             ime_context_triggers: default_ime_context_triggers(),
         }
     }
@@ -1167,32 +1163,19 @@ type Diagnostics = BTreeMap<Uri, Vec<(lsp::Diagnostic, DiagnosticProvider)>>;
 enum SyntaxZone {
     Code,
     Trigger,
+    None,
 }
 
 /// Determines the syntax context (zone) at a given position in a document.
-fn syntax_zone_at_pos(doc: &Document, pos: Position, _config: &Config) -> SyntaxZone {
+fn syntax_zone_at_pos(doc: &Document, pos: Position) -> SyntaxZone {
     // Get language-specific configuration.
     let lang_config = match doc.language_config() {
         Some(config) => config,
         // If a document has no language configuration at all, it's plain text.
-        None => return SyntaxZone::Trigger,
+        None => return SyntaxZone::None,
     };
 
-    // 1. Check for whole-file trigger (`auto_ime_allscopes`).
-    // If configured for whole-file, it's a trigger zone.
-    //    (This also handles our smart default for "text", "markdown", etc.)
-    if lang_config.auto_ime_allscopes {
-        return SyntaxZone::Trigger;
-    }
-
-    // 2. Check for scope-based triggers (`auto_ime_scopes`).
-    // If we are supposed to check scopes, but there is no syntax tree,
-    //    we can't parse it. Treat as a trigger zone as per user request.
-    if !lang_config.auto_ime_scopes.is_empty() && doc.syntax().is_none() {
-        return SyntaxZone::Trigger;
-    }
-
-    // 3. If we have a syntax tree, perform the scope check.
+    // If we have a syntax tree, perform the scope check.
     if let Some(syntax) = doc.syntax() {
         if !lang_config.auto_ime_scopes.is_empty() {
             let text = doc.text();
@@ -1213,17 +1196,16 @@ fn syntax_zone_at_pos(doc: &Document, pos: Position, _config: &Config) -> Syntax
                     return SyntaxZone::Trigger;
                 }
             }
+            return SyntaxZone::Code;
         }
     }
-    SyntaxZone::Code
+    SyntaxZone::None
 }
 
 pub struct Editor {
     /// Current editing mode.
     pub mode: Mode,
     pub ime_manager: Box<dyn ImeManager>, // ADDED: Made public
-    /// Tracks if the IME should be active based on the current syntax context.
-    ime_context_active: bool,
     /// Cache for the last selection to avoid redundant IME state updates.
     last_ime_selection: HashMap<ViewId, Selection>,
     /// Cache for the last syntax zone to avoid redundant IME state updates.
@@ -1383,7 +1365,6 @@ impl Editor {
         Self {
             mode: Mode::Normal,
             ime_manager,
-            ime_context_active: true,
             tree: Tree::new(area),
             next_document_id: DocumentId::default(),
             documents: BTreeMap::new(),
@@ -2312,7 +2293,7 @@ impl Editor {
             ),
         )
         .await
-        .map(|_| (()))
+        .map(|_| ())
     }
 
     pub async fn wait_event(&mut self) -> EditorEvent {
@@ -2383,27 +2364,18 @@ impl Editor {
     }
 
     pub fn update_ime_state(&mut self) {
-        let config = self.config();
-        // If the feature is disabled, or we are not in insert mode, do nothing.
-        if !config.ime_context_switching || self.mode != Mode::Insert {
+        let (view, doc) = current!(self);
+        // If the feature is disabled for this document, or we are not in insert mode, do nothing.
+        if !doc.ime_switch_syntax() || self.mode != Mode::Insert {
             return;
         }
 
-        let (view, doc) = current!(self);
+        // let (view, doc) = current!(self);
         let view_id = view.id;
         let selection = doc.selection(view_id).clone();
 
         // Avoid redundant updates if the selection has not changed.
         if self.last_ime_selection.get(&view_id) == Some(&selection) {
-            return;
-        }
-
-        // If there is no syntax tree, there's no context to switch on.
-        // In this case, we should not interfere with the mode-based IME state.
-        // The state set by `set_mode` should be final for this file type.
-        if doc.syntax().is_none() {
-            // Still update the cache to prevent re-checks for every cursor movement.
-            self.last_ime_selection.insert(view_id, selection);
             return;
         }
 
@@ -2413,7 +2385,12 @@ impl Editor {
         let line = doc.text().char_to_line(pos_char);
         let col = pos_char - doc.text().line_to_char(line);
         let pos = Position { row: line, col };
-        let current_zone = syntax_zone_at_pos(doc, pos, &config);
+        let current_zone = syntax_zone_at_pos(doc, pos);
+
+        // do nothing if the zone isn't None
+        if current_zone == SyntaxZone::None {
+            return;
+        }
 
         // Only update IME state if the zone has changed
         let last_zone = self
@@ -2431,7 +2408,6 @@ impl Editor {
                 let current_ime_status = self.ime_manager.disable_and_get_status();
                 self.ime_states.insert(view_id, current_ime_status);
             }
-            self.ime_context_active = current_zone == SyntaxZone::Trigger;
             *last_zone = current_zone; // Update the cached zone
         }
 
@@ -2449,44 +2425,35 @@ impl Editor {
         self.mode = new_mode;
         let (view, doc) = current_ref!(self);
         let view_id = view.id;
-        let config = self.config();
 
-        // Only apply smart IME logic if the feature is enabled.
-        if config.ime_context_switching {
-            // Determine if the primary cursor is in a trigger zone.
-            // This check is relevant for both entering and leaving insert mode.
-            let primary_selection = doc.selection(view_id).primary();
-            let pos_char = primary_selection.cursor(doc.text().slice(..));
-            let line = doc.text().char_to_line(pos_char);
-            let col = pos_char - doc.text().line_to_char(line);
-            let pos = Position { row: line, col };
-            let in_trigger_zone = syntax_zone_at_pos(doc, pos, &config) == SyntaxZone::Trigger;
-
-            if new_mode == Mode::Insert && old_mode != Mode::Insert {
-                // ENTERING Insert mode
-                if in_trigger_zone {
-                    // If entering a trigger zone, restore the last known state.
-                    let last_user_status = self.ime_states.get(&view_id).copied().unwrap_or(true);
-                    self.ime_manager.enable_with_status(Some(last_user_status));
-                    self.ime_context_active = last_user_status;
-                } else {
-                    // If entering a non-trigger zone, ensure IME is off.
-                    // We don't need to save state, just disable.
-                    self.ime_manager.disable_and_get_status();
-                    self.ime_context_active = false;
-                }
-            } else if new_mode != Mode::Insert && old_mode == Mode::Insert {
-                // LEAVING Insert mode
-                // First, ensure IME is disabled since we are no longer in insert mode.
-                let current_ime_status = self.ime_manager.disable_and_get_status();
-
-                // Only save the IME state if we were in a trigger zone.
-                // This prevents overwriting the string or comment IME state with the
-                // code zone IME state (which is usually off).
-                if in_trigger_zone {
-                    self.ime_states.insert(view_id, current_ime_status);
-                }
-                self.ime_context_active = false;
+        // Determine if the primary cursor is in a trigger zone.
+        // This check is relevant for both entering and leaving insert mode.
+        let primary_selection = doc.selection(view_id).primary();
+        let pos_char = primary_selection.cursor(doc.text().slice(..));
+        let line = doc.text().char_to_line(pos_char);
+        let col = pos_char - doc.text().line_to_char(line);
+        let pos = Position { row: line, col };
+        let in_not_code_zone = syntax_zone_at_pos(doc, pos) != SyntaxZone::Code;
+        if new_mode == Mode::Insert && old_mode != Mode::Insert {
+            // ENTERING Insert mode
+            if in_not_code_zone {
+                // If entering a trigger zone, restore the last known state.
+                let last_user_status = self.ime_states.get(&view_id).copied().unwrap_or(false);
+                self.ime_manager.enable_with_status(Some(last_user_status));
+            } else {
+                // If entering a non-trigger zone, ensure IME is off.
+                // We don't need to save state, just disable.
+                self.ime_manager.disable_and_get_status();
+            }
+        } else if new_mode != Mode::Insert && old_mode == Mode::Insert {
+            // LEAVING Insert mode
+            // First, ensure IME is disabled since we are no longer in insert mode.
+            let current_ime_status = self.ime_manager.disable_and_get_status();
+            // Only save the IME state if we were in a trigger zone.
+            // This prevents overwriting the string or comment IME state with the
+            // code zone IME state (which is usually off).
+            if in_not_code_zone {
+                self.ime_states.insert(view_id, current_ime_status);
             }
         }
 

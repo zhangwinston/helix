@@ -9,17 +9,9 @@ pub fn default_lang_config() -> Configuration {
     // Apply smart defaults for IME settings
     for lang_config in &mut config.language {
         // Only apply defaults if no explicit user config is set
-        if !lang_config.auto_ime_allscopes && lang_config.auto_ime_scopes.is_empty() {
-            match lang_config.language_id.as_str() {
-                "markdown" | "git-commit" | "text" => {
-                    lang_config.auto_ime_allscopes = true;
-                }
-                _ => {
-                    if lang_config.comment_tokens.is_some() {
-                        lang_config.auto_ime_scopes =
-                            vec!["string".to_string(), "comment".to_string()];
-                    }
-                }
+        if lang_config.auto_ime_scopes.is_empty() {
+            if lang_config.comment_tokens.is_some() {
+                lang_config.auto_ime_scopes = vec!["string".to_string(), "comment".to_string()];
             }
         }
     }
@@ -63,17 +55,9 @@ pub fn user_lang_loader() -> Result<Loader, LanguageLoaderError> {
     // Apply smart defaults for IME settings
     for lang_config in &mut config.language {
         // Only apply defaults if no explicit user config is set
-        if !lang_config.auto_ime_allscopes && lang_config.auto_ime_scopes.is_empty() {
-            match lang_config.language_id.as_str() {
-                "markdown" | "git-commit" | "text" => {
-                    lang_config.auto_ime_allscopes = true;
-                }
-                _ => {
-                    if lang_config.comment_tokens.is_some() {
-                        lang_config.auto_ime_scopes =
-                            vec!["string".to_string(), "comment".to_string()];
-                    }
-                }
+        if lang_config.auto_ime_scopes.is_empty() {
+            if lang_config.comment_tokens.is_some() {
+                lang_config.auto_ime_scopes = vec!["string".to_string(), "comment".to_string()];
             }
         }
     }

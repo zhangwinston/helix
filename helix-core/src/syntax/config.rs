@@ -95,8 +95,6 @@ pub struct LanguageConfiguration {
     pub auto_pairs: Option<AutoPairs>,
 
     #[serde(default)]
-    pub auto_ime_allscopes: bool,
-    #[serde(default)]
     pub auto_ime_scopes: Vec<String>,
 
     pub rulers: Option<Vec<u16>>, // if set, override editor's rulers

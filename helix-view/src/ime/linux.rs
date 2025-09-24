@@ -61,7 +61,10 @@ impl ImeManager for LinuxImeManager {
                 }
                 let _ = proxy.call_method(
                     "SetInputMethod",
-                    &("", OwnedObjectPath::from(zbus::zvariant::ObjectPath::try_from("/").unwrap())),
+                    &(
+                        "",
+                        OwnedObjectPath::from(zbus::zvariant::ObjectPath::try_from("/").unwrap()),
+                    ),
                 );
             }
             ImeService::None => (),

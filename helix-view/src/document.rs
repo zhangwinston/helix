@@ -171,6 +171,7 @@ pub struct Document {
     pub syntax: Option<Syntax>,
     /// Corresponding language scope name. Usually `source.<lang>`.
     pub language: Option<Arc<LanguageConfiguration>>,
+    pub ime_switch_syntax: bool,
 
     /// Pending changes since last history commit.
     changes: ChangeSet,
@@ -712,6 +713,7 @@ impl Document {
             restore_cursor: false,
             syntax: None,
             language: None,
+            ime_switch_syntax: false,
             changes,
             old_state,
             diagnostics: Vec::new(),
@@ -742,7 +744,9 @@ impl Document {
     ) -> Self {
         let line_ending: LineEnding = config.load().default_line_ending.into();
         let text = Rope::from(line_ending.as_str());
-        Self::from(text, None, config, syn_loader)
+        let mut doc = Self::from(text, None, config, syn_loader);
+        doc.refresh_ime_switch_syntax();
+        doc
     }
 
     // TODO: async fn?
@@ -787,6 +791,8 @@ impl Document {
         if detect_language {
             doc.detect_language(&loader);
         }
+
+        doc.refresh_ime_switch_syntax();
 
         doc.editor_config = editor_config;
         doc.detect_indent_and_line_ending();
@@ -1308,6 +1314,7 @@ impl Document {
                 })
                 .ok()
         });
+        self.refresh_ime_switch_syntax();
     }
 
     /// Set the programming language for the file if you know the language but don't have the
@@ -1808,6 +1815,25 @@ impl Document {
     /// Corresponding [`LanguageConfiguration`].
     pub fn language_config(&self) -> Option<&LanguageConfiguration> {
         self.language.as_deref()
+    }
+
+    pub fn ime_switch_syntax(&self) -> bool {
+        self.ime_switch_syntax
+    }
+
+    pub fn refresh_ime_switch_syntax(&mut self) {
+        let enabled = if let Some(lang_config) = self.language_config() {
+            if lang_config.auto_ime_scopes.is_empty() {
+                false
+            } else {
+                true
+            }
+        } else {
+            // This is a "text" file (no language config).
+            // Per user request, default to disabled for text.
+            false
+        };
+        self.ime_switch_syntax = enabled;
     }
 
     /// Current document version, incremented at each change.
