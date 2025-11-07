@@ -1181,7 +1181,7 @@ See the documentation page on <a href="./pickers.html">pickers</a> for more info
 <h2 id="quoting"><a class="header" href="#quoting">Quoting</a></h2>
 <p>By default, command arguments are split on tabs and space characters. <code>:open README.md CHANGELOG.md</code> for example should open two files, <code>README.md</code> and <code>CHANGELOG.md</code>. Arguments that contain spaces can be surrounded in single quotes (<code>'</code>) or backticks (<code>`</code>) to prevent the space from separating the argument, like <code>:open 'a b.txt'</code>.</p>
 <p>Double quotes may be used the same way, but double quotes <em>expand</em> their inner content. <code>:echo "%{cursor_line}"</code> for example may print <code>1</code> because of the expansion for the <code>cursor_line</code> variable. <code>:echo '%{cursor_line}'</code> though prints <code>%{cursor_line}</code> literally: content within single quotes or backticks is interpreted as-is.</p>
-<p>On Unix systems the backslash character may be used to escape certain characters depending on where it is used. Within an argument which isn't surround in quotes, the backslash can be used to escape the space or tab characters: <code>:open a\ b.txt</code> is equivalent to <code>:open 'a b.txt'</code>. The backslash may also be used to escape quote characters (<code>'</code>, <code>`</code>, <code>"</code>) or the percent token (<code>%</code>) when used at the beginning of an argument. <code>:echo \%%sh{foo}</code> for example prints <code>%sh{foo}</code> instead of invoking a <code>foo</code> shell command and <code>:echo \"quote</code> prints <code>"quote</code>. The backslash character is treated literally in any other situation on Unix systems and always on Windows: <code>:echo \n</code> always prints <code>\n</code>.</p>
+<p>On Unix systems the backslash character may be used to escape certain characters depending on where it is used. Within an argument which isn't surround in quotes, the backslash can be used to escape the space or tab characters: <code>:open a\ b.txt</code> is equivalent to <code>:open 'a b.txt'</code>. The backslash may also be used to escape quote characters (<code>'</code>, <code>`</code>, <code>"</code>) or the percent token (<code>%</code>) when used at the beginning of an argument. <code>:echo \%sh{foo}</code> for example prints <code>%sh{foo}</code> instead of invoking a <code>foo</code> shell command and <code>:echo \"quote</code> prints <code>"quote</code>. The backslash character is treated literally in any other situation on Unix systems and always on Windows: <code>:echo \n</code> always prints <code>\n</code>.</p>
 <h2 id="flags"><a class="header" href="#flags">Flags</a></h2>
 <p>Command flags are optional switches that can be used to alter the behavior of a command. For example the <code>:sort</code> command accepts an optional <code>--reverse</code> (or <code>-r</code> for short) flag which causes the sort command to reverse the sorting direction. Typing the <code>-</code> character shows completions for the current command's flags, if any.</p>
 <p>The <code>--</code> flag specifies the end of flags. All arguments after <code>--</code> are treated as positional arguments: <code>:open -- -a.txt</code> opens a file called <code>-a.txt</code>.</p>
@@ -1242,6 +1242,8 @@ space.B = ":echo %sh{git blame -L %{cursor_line},+1 %{buffer_name}}"
 <h2 id="typable-commands"><a class="header" href="#typable-commands">Typable commands</a></h2>
 <p>Typable commands are used from command mode and may take arguments. Command mode can be activated by pressing <code>:</code>. The built-in typable commands are:</p>
 <div class="table-wrapper"><table><thead><tr><th>Name</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>:exit</code>, <code>:x</code>, <code>:xit</code></td><td>Write changes to disk if the buffer is modified and then quit. Accepts an optional path (:exit some/path.txt).</td></tr>
+<tr><td><code>:exit!</code>, <code>:x!</code>, <code>:xit!</code></td><td>Force write changes to disk, creating necessary subdirectories, if the buffer is modified and then quit. Accepts an optional path (:exit! some/path.txt).</td></tr>
 <tr><td><code>:quit</code>, <code>:q</code></td><td>Close the current view.</td></tr>
 <tr><td><code>:quit!</code>, <code>:q!</code></td><td>Force close the current view, ignoring unsaved changes.</td></tr>
 <tr><td><code>:open</code>, <code>:o</code>, <code>:edit</code>, <code>:e</code></td><td>Open a file from disk into the current view.</td></tr>
@@ -1263,12 +1265,12 @@ space.B = ":echo %sh{git blame -L %{cursor_line},+1 %{buffer_name}}"
 <tr><td><code>:line-ending</code></td><td>Set the document's default line ending. Options: crlf, lf.</td></tr>
 <tr><td><code>:earlier</code>, <code>:ear</code></td><td>Jump back to an earlier point in edit history. Accepts a number of steps or a time span.</td></tr>
 <tr><td><code>:later</code>, <code>:lat</code></td><td>Jump to a later point in edit history. Accepts a number of steps or a time span.</td></tr>
-<tr><td><code>:write-quit</code>, <code>:wq</code>, <code>:x</code></td><td>Write changes to disk and close the current view. Accepts an optional path (:wq some/path.txt)</td></tr>
-<tr><td><code>:write-quit!</code>, <code>:wq!</code>, <code>:x!</code></td><td>Write changes to disk and close the current view forcefully. Accepts an optional path (:wq! some/path.txt)</td></tr>
+<tr><td><code>:write-quit</code>, <code>:wq</code></td><td>Write changes to disk and close the current view. Accepts an optional path (:wq some/path.txt)</td></tr>
+<tr><td><code>:write-quit!</code>, <code>:wq!</code></td><td>Write changes to disk and close the current view forcefully. Accepts an optional path (:wq! some/path.txt)</td></tr>
 <tr><td><code>:write-all</code>, <code>:wa</code></td><td>Write changes from all buffers to disk.</td></tr>
 <tr><td><code>:write-all!</code>, <code>:wa!</code></td><td>Forcefully write changes from all buffers to disk creating necessary subdirectories.</td></tr>
 <tr><td><code>:write-quit-all</code>, <code>:wqa</code>, <code>:xa</code></td><td>Write changes from all buffers to disk and close all views.</td></tr>
-<tr><td><code>:write-quit-all!</code>, <code>:wqa!</code>, <code>:xa!</code></td><td>Write changes from all buffers to disk and close all views forcefully (ignoring unsaved changes).</td></tr>
+<tr><td><code>:write-quit-all!</code>, <code>:wqa!</code>, <code>:xa!</code></td><td>Forcefully write changes from all buffers to disk, creating necessary subdirectories, and close all views (ignoring unsaved changes).</td></tr>
 <tr><td><code>:quit-all</code>, <code>:qa</code></td><td>Close all views.</td></tr>
 <tr><td><code>:quit-all!</code>, <code>:qa!</code></td><td>Force close all views ignoring unsaved changes.</td></tr>
 <tr><td><code>:cquit</code>, <code>:cq</code></td><td>Quit with exit code (default 1). Accepts an optional integer exit code (:cq 2).</td></tr>
@@ -1298,6 +1300,7 @@ space.B = ":echo %sh{git blame -L %{cursor_line},+1 %{buffer_name}}"
 <tr><td><code>:lsp-stop</code></td><td>Stops the given language servers, or all language servers that are used by the current file if no arguments are supplied</td></tr>
 <tr><td><code>:tree-sitter-scopes</code></td><td>Display tree sitter scopes, primarily for theming and development.</td></tr>
 <tr><td><code>:tree-sitter-highlight-name</code></td><td>Display name of tree-sitter highlight scope under the cursor.</td></tr>
+<tr><td><code>:tree-sitter-layers</code></td><td>Display language names of tree-sitter injection layers under the cursor.</td></tr>
 <tr><td><code>:debug-start</code>, <code>:dbg</code></td><td>Start a debug session from a given template with given parameters.</td></tr>
 <tr><td><code>:debug-remote</code>, <code>:dbg-tcp</code></td><td>Connect to a debug adapter by TCP address and start a debugging session from a given template with given parameters.</td></tr>
 <tr><td><code>:debug-eval</code></td><td>Evaluate expression in current debug context.</td></tr>
@@ -1673,6 +1676,7 @@ Languages</a> guide for more language configuration information.</p>
 <tr><td>bitbake</td><td>✓</td><td></td><td></td><td></td><td></td><td><code>bitbake-language-server</code></td></tr>
 <tr><td>blade</td><td>✓</td><td>✓</td><td></td><td></td><td>✓</td><td></td></tr>
 <tr><td>blueprint</td><td>✓</td><td></td><td></td><td></td><td></td><td><code>blueprint-compiler</code></td></tr>
+<tr><td>bovex</td><td>✓</td><td></td><td></td><td></td><td>✓</td><td></td></tr>
 <tr><td>c</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td><code>clangd</code></td></tr>
 <tr><td>c-sharp</td><td>✓</td><td>✓</td><td></td><td>✓</td><td></td><td><code>OmniSharp</code></td></tr>
 <tr><td>cabal</td><td></td><td></td><td></td><td></td><td></td><td><code>haskell-language-server-wrapper</code></td></tr>
@@ -1715,6 +1719,7 @@ Languages</a> guide for more language configuration information.</p>
 <tr><td>earthfile</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td><td><code>earthlyls</code></td></tr>
 <tr><td>edoc</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
 <tr><td>eex</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
+<tr><td>eiffel</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td><td><code>eiffel-language-server</code></td></tr>
 <tr><td>ejs</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
 <tr><td>elisp</td><td>✓</td><td></td><td></td><td>✓</td><td></td><td></td></tr>
 <tr><td>elixir</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td><code>elixir-ls</code>, <code>expert</code></td></tr>
@@ -1739,7 +1744,7 @@ Languages</a> guide for more language configuration information.</p>
 <tr><td>ghostty</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
 <tr><td>git-attributes</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
 <tr><td>git-cliff-config</td><td>✓</td><td>✓</td><td></td><td></td><td>✓</td><td><code>taplo</code>, <code>tombi</code></td></tr>
-<tr><td>git-commit</td><td>✓</td><td>✓</td><td></td><td></td><td></td><td></td></tr>
+<tr><td>git-commit</td><td>✓</td><td>✓</td><td></td><td></td><td></td><td><code>commit-lsp</code></td></tr>
 <tr><td>git-config</td><td>✓</td><td>✓</td><td></td><td></td><td></td><td></td></tr>
 <tr><td>git-ignore</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
 <tr><td>git-notes</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
@@ -1793,11 +1798,12 @@ Languages</a> guide for more language configuration information.</p>
 <tr><td>json</td><td>✓</td><td>✓</td><td>✓</td><td></td><td>✓</td><td><code>vscode-json-language-server</code></td></tr>
 <tr><td>json-ld</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td><td><code>vscode-json-language-server</code></td></tr>
 <tr><td>json5</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
-<tr><td>jsonc</td><td>✓</td><td></td><td>✓</td><td></td><td></td><td><code>vscode-json-language-server</code></td></tr>
+<tr><td>jsonc</td><td>✓</td><td></td><td>✓</td><td></td><td>✓</td><td><code>vscode-json-language-server</code></td></tr>
 <tr><td>jsonnet</td><td>✓</td><td></td><td></td><td></td><td></td><td><code>jsonnet-language-server</code></td></tr>
 <tr><td>jsx</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td><code>typescript-language-server</code></td></tr>
 <tr><td>julia</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td><td><code>julia</code></td></tr>
 <tr><td>just</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td><td><code>just-lsp</code></td></tr>
+<tr><td>kcl</td><td>✓</td><td></td><td></td><td></td><td></td><td><code>kcl-language-server</code></td></tr>
 <tr><td>kconfig</td><td>✓</td><td></td><td>✓</td><td></td><td></td><td></td></tr>
 <tr><td>kdl</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td></tr>
 <tr><td>koka</td><td>✓</td><td></td><td>✓</td><td></td><td></td><td><code>koka</code></td></tr>
@@ -1819,17 +1825,19 @@ Languages</a> guide for more language configuration information.</p>
 <tr><td>mail</td><td>✓</td><td>✓</td><td></td><td></td><td></td><td></td></tr>
 <tr><td>make</td><td>✓</td><td></td><td>✓</td><td></td><td></td><td></td></tr>
 <tr><td>markdoc</td><td>✓</td><td></td><td></td><td></td><td></td><td><code>markdoc-ls</code></td></tr>
-<tr><td>markdown</td><td>✓</td><td></td><td></td><td>✓</td><td></td><td><code>marksman</code>, <code>markdown-oxide</code></td></tr>
+<tr><td>markdown</td><td>✓</td><td></td><td></td><td>✓</td><td></td><td><code>marksman</code>, <code>markdown-oxide</code>, <code>rumdl</code></td></tr>
 <tr><td>markdown-rustdoc</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
 <tr><td>markdown.inline</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
 <tr><td>matlab</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td><td></td></tr>
 <tr><td>mermaid</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
 <tr><td>meson</td><td>✓</td><td></td><td>✓</td><td></td><td></td><td><code>mesonlsp</code></td></tr>
 <tr><td>mint</td><td></td><td></td><td></td><td></td><td></td><td><code>mint</code></td></tr>
+<tr><td>miseconfig</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td><td><code>taplo</code>, <code>tombi</code></td></tr>
 <tr><td>mojo</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td><td><code>pixi</code></td></tr>
 <tr><td>move</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
 <tr><td>msbuild</td><td>✓</td><td></td><td>✓</td><td></td><td></td><td></td></tr>
 <tr><td>nasm</td><td>✓</td><td>✓</td><td></td><td></td><td></td><td><code>asm-lsp</code></td></tr>
+<tr><td>nearley</td><td>✓</td><td></td><td></td><td></td><td>✓</td><td></td></tr>
 <tr><td>nestedtext</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td><td></td></tr>
 <tr><td>nginx</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
 <tr><td>nickel</td><td>✓</td><td></td><td>✓</td><td></td><td></td><td><code>nls</code></td></tr>
@@ -1931,7 +1939,7 @@ Languages</a> guide for more language configuration information.</p>
 <tr><td>typespec</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td><td><code>tsp-server</code></td></tr>
 <tr><td>typst</td><td>✓</td><td></td><td></td><td>✓</td><td></td><td><code>tinymist</code></td></tr>
 <tr><td>ungrammar</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
-<tr><td>unison</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td><td></td></tr>
+<tr><td>unison</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td></tr>
 <tr><td>uxntal</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
 <tr><td>v</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td><td><code>v-analyzer</code></td></tr>
 <tr><td>vala</td><td>✓</td><td>✓</td><td></td><td></td><td></td><td><code>vala-language-server</code></td></tr>
@@ -2059,11 +2067,11 @@ Its settings will be merged with the configuration directory <code>config.toml</
 <div class="table-wrapper"><table><thead><tr><th>Key</th><th>Description</th><th>Default</th></tr></thead><tbody>
 <tr><td><code>scrolloff</code></td><td>Number of lines of padding around the edge of the screen when scrolling</td><td><code>5</code></td></tr>
 <tr><td><code>mouse</code></td><td>Enable mouse mode</td><td><code>true</code></td></tr>
-<tr><td><code>default-yank-register</code></td><td>Default register used for yank/paste</td><td><code>"</code></td></tr>
+<tr><td><code>default-yank-register</code></td><td>Default register used for yank/paste</td><td><code>'"'</code></td></tr>
 <tr><td><code>middle-click-paste</code></td><td>Middle click paste support</td><td><code>true</code></td></tr>
 <tr><td><code>scroll-lines</code></td><td>Number of lines to scroll per scroll wheel step</td><td><code>3</code></td></tr>
 <tr><td><code>shell</code></td><td>Shell to use when running external commands</td><td>Unix: <code>["sh", "-c"]</code><br/>Windows: <code>["cmd", "/C"]</code></td></tr>
-<tr><td><code>line-number</code></td><td>Line number display: <code>absolute</code> simply shows each line's number, while <code>relative</code> shows the distance from the current line. When unfocused or in insert mode, <code>relative</code> will still show absolute line numbers</td><td><code>absolute</code></td></tr>
+<tr><td><code>line-number</code></td><td>Line number display: <code>absolute</code> simply shows each line's number, while <code>relative</code> shows the distance from the current line. When unfocused or in insert mode, <code>relative</code> will still show absolute line numbers</td><td><code>"absolute"</code></td></tr>
 <tr><td><code>cursorline</code></td><td>Highlight all lines with a cursor</td><td><code>false</code></td></tr>
 <tr><td><code>cursorcolumn</code></td><td>Highlight all columns with a cursor</td><td><code>false</code></td></tr>
 <tr><td><code>continue-comments</code></td><td>if helix should automatically add a line comment token if you create a new line inside a comment.</td><td><code>true</code></td></tr>
@@ -2075,28 +2083,28 @@ Its settings will be merged with the configuration directory <code>config.toml</
 <tr><td><code>completion-timeout</code></td><td>Time in milliseconds after typing a word character before completions are shown, set to 5 for instant.</td><td><code>250</code></td></tr>
 <tr><td><code>preview-completion-insert</code></td><td>Whether to apply completion item instantly when selected</td><td><code>true</code></td></tr>
 <tr><td><code>completion-trigger-len</code></td><td>The min-length of word under cursor to trigger autocompletion</td><td><code>2</code></td></tr>
-<tr><td><code>completion-replace</code></td><td>Set to <code>true</code> to make completions always replace the entire word and not just the part before the cursor</td><td><code>false</code></td></tr>
+<tr><td><code>completion-replace</code></td><td>Whether to make completions always replace the entire word and not just the part before the cursor</td><td><code>false</code></td></tr>
 <tr><td><code>auto-info</code></td><td>Whether to display info boxes</td><td><code>true</code></td></tr>
-<tr><td><code>true-color</code></td><td>Set to <code>true</code> to override automatic detection of terminal truecolor support in the event of a false negative</td><td><code>false</code></td></tr>
-<tr><td><code>undercurl</code></td><td>Set to <code>true</code> to override automatic detection of terminal undercurl support in the event of a false negative</td><td><code>false</code></td></tr>
+<tr><td><code>true-color</code></td><td>Whether to override automatic detection of terminal truecolor support in the event of a false negative</td><td><code>false</code></td></tr>
+<tr><td><code>undercurl</code></td><td>Whether to override automatic detection of terminal undercurl support in the event of a false negative</td><td><code>false</code></td></tr>
 <tr><td><code>rulers</code></td><td>List of column positions at which to display the rulers. Can be overridden by language specific <code>rulers</code> in <code>languages.toml</code> file</td><td><code>[]</code></td></tr>
-<tr><td><code>bufferline</code></td><td>Renders a line at the top of the editor displaying open buffers. Can be <code>always</code>, <code>never</code> or <code>multiple</code> (only shown if more than one buffer is in use)</td><td><code>never</code></td></tr>
+<tr><td><code>bufferline</code></td><td>Renders a line at the top of the editor displaying open buffers. Can be <code>always</code>, <code>never</code> or <code>multiple</code> (only shown if more than one buffer is in use)</td><td><code>"never"</code></td></tr>
 <tr><td><code>color-modes</code></td><td>Whether to color the mode indicator with different colors depending on the mode itself</td><td><code>false</code></td></tr>
 <tr><td><code>text-width</code></td><td>Maximum line length. Used for the <code>:reflow</code> command and soft-wrapping if <code>soft-wrap.wrap-at-text-width</code> is set</td><td><code>80</code></td></tr>
 <tr><td><code>workspace-lsp-roots</code></td><td>Directories relative to the workspace root that are treated as LSP roots. Should only be set in <code>.helix/config.toml</code></td><td><code>[]</code></td></tr>
-<tr><td><code>default-line-ending</code></td><td>The line ending to use for new documents. Can be <code>native</code>, <code>lf</code>, <code>crlf</code>, <code>ff</code>, <code>cr</code> or <code>nel</code>. <code>native</code> uses the platform's native line ending (<code>crlf</code> on Windows, otherwise <code>lf</code>).</td><td><code>native</code></td></tr>
+<tr><td><code>default-line-ending</code></td><td>The line ending to use for new documents. Can be <code>native</code>, <code>lf</code>, <code>crlf</code>, <code>ff</code>, <code>cr</code> or <code>nel</code>. <code>native</code> uses the platform's native line ending (<code>crlf</code> on Windows, otherwise <code>lf</code>).</td><td><code>"native"</code></td></tr>
 <tr><td><code>insert-final-newline</code></td><td>Whether to automatically insert a trailing line-ending on write if missing</td><td><code>true</code></td></tr>
 <tr><td><code>atomic-save</code></td><td>Whether to use atomic operations to write documents to disk. This prevents data loss if the editor is interrupted while writing the file, but may confuse some file watching/hot reloading programs.</td><td><code>true</code></td></tr>
 <tr><td><code>trim-final-newlines</code></td><td>Whether to automatically remove line-endings after the final one on write</td><td><code>false</code></td></tr>
 <tr><td><code>trim-trailing-whitespace</code></td><td>Whether to automatically remove whitespace preceding line endings on write</td><td><code>false</code></td></tr>
-<tr><td><code>popup-border</code></td><td>Draw border around <code>popup</code>, <code>menu</code>, <code>all</code>, or <code>none</code></td><td><code>none</code></td></tr>
-<tr><td><code>indent-heuristic</code></td><td>How the indentation for a newly inserted line is computed: <code>simple</code> just copies the indentation level from the previous line, <code>tree-sitter</code> computes the indentation based on the syntax tree and <code>hybrid</code> combines both approaches. If the chosen heuristic is not available, a different one will be used as a fallback (the fallback order being <code>hybrid</code> -&gt; <code>tree-sitter</code> -&gt; <code>simple</code>).</td><td><code>hybrid</code></td></tr>
+<tr><td><code>popup-border</code></td><td>Draw border around <code>popup</code>, <code>menu</code>, <code>all</code>, or <code>none</code></td><td><code>"none"</code></td></tr>
+<tr><td><code>indent-heuristic</code></td><td>How the indentation for a newly inserted line is computed: <code>simple</code> just copies the indentation level from the previous line, <code>tree-sitter</code> computes the indentation based on the syntax tree and <code>hybrid</code> combines both approaches. If the chosen heuristic is not available, a different one will be used as a fallback (the fallback order being <code>hybrid</code> -&gt; <code>tree-sitter</code> -&gt; <code>simple</code>).</td><td><code>"hybrid"</code></td></tr>
 <tr><td><code>jump-label-alphabet</code></td><td>The characters that are used to generate two character jump labels. Characters at the start of the alphabet are used first.</td><td><code>"abcdefghijklmnopqrstuvwxyz"</code></td></tr>
 <tr><td><code>end-of-line-diagnostics</code></td><td>Minimum severity of diagnostics to render at the end of the line. Set to <code>disable</code> to disable entirely. Refer to the setting about <code>inline-diagnostics</code> for more details</td><td><code>"hint"</code></td></tr>
 <tr><td><code>clipboard-provider</code></td><td>Which API to use for clipboard interaction. One of <code>pasteboard</code> (MacOS), <code>wayland</code>, <code>x-clip</code>, <code>x-sel</code>, <code>win32-yank</code>, <code>termux</code>, <code>tmux</code>, <code>windows</code>, <code>termcode</code>, <code>none</code>, or a custom command set.</td><td>Platform and environment specific.</td></tr>
 <tr><td><code>editor-config</code></td><td>Whether to read settings from <a href="https://editorconfig.org">EditorConfig</a> files</td><td><code>true</code></td></tr>
 <tr><td><code>rainbow-brackets</code></td><td>Whether to render rainbow colors for matching brackets. Requires tree-sitter <code>rainbows.scm</code> queries for the language.</td><td><code>false</code></td></tr>
-<tr><td><code>kitty-keyboard-protocol</code></td><td>Whether to enable Kitty Keyboard Protocol. Can be <code>enabled</code>, <code>disabled</code> or <code>auto</code></td><td><code>auto</code></td></tr>
+<tr><td><code>kitty-keyboard-protocol</code></td><td>Whether to enable Kitty Keyboard Protocol. Can be <code>enabled</code>, <code>disabled</code> or <code>auto</code></td><td><code>"auto"</code></td></tr>
 </tbody></table>
 </div>
 <h3 id="editorclipboard-provider-section"><a class="header" href="#editorclipboard-provider-section"><code>[editor.clipboard-provider]</code> Section</a></h3>
@@ -2198,9 +2206,9 @@ Valid values for these options are <code>block</code>, <code>bar</code>, <code>u
 change shape.</p>
 </blockquote>
 <div class="table-wrapper"><table><thead><tr><th>Key</th><th>Description</th><th>Default</th></tr></thead><tbody>
-<tr><td><code>normal</code></td><td>Cursor shape in <a href="./keymap.html#normal-mode">normal mode</a></td><td><code>block</code></td></tr>
-<tr><td><code>insert</code></td><td>Cursor shape in <a href="./keymap.html#insert-mode">insert mode</a></td><td><code>block</code></td></tr>
-<tr><td><code>select</code></td><td>Cursor shape in <a href="./keymap.html#select--extend-mode">select mode</a></td><td><code>block</code></td></tr>
+<tr><td><code>normal</code></td><td>Cursor shape in <a href="./keymap.html#normal-mode">normal mode</a></td><td><code>"block"</code></td></tr>
+<tr><td><code>insert</code></td><td>Cursor shape in <a href="./keymap.html#insert-mode">insert mode</a></td><td><code>"block"</code></td></tr>
+<tr><td><code>select</code></td><td>Cursor shape in <a href="./keymap.html#select--extend-mode">select mode</a></td><td><code>"block"</code></td></tr>
 </tbody></table>
 </div>
 <h3 id="editorfile-picker-section"><a class="header" href="#editorfile-picker-section"><code>[editor.file-picker]</code> Section</a></h3>
@@ -2295,7 +2303,7 @@ name = "rust"
 <h3 id="editorwhitespace-section"><a class="header" href="#editorwhitespace-section"><code>[editor.whitespace]</code> Section</a></h3>
 <p>Options for rendering whitespace with visible characters. Use <code>:set whitespace.render all</code> to temporarily enable visible whitespace.</p>
 <div class="table-wrapper"><table><thead><tr><th>Key</th><th>Description</th><th>Default</th></tr></thead><tbody>
-<tr><td><code>render</code></td><td>Whether to render whitespace. May either be <code>all</code> or <code>none</code>, or a table with sub-keys <code>space</code>, <code>nbsp</code>, <code>nnbsp</code>, <code>tab</code>, and <code>newline</code></td><td><code>none</code></td></tr>
+<tr><td><code>render</code></td><td>Whether to render whitespace. May either be <code>all</code> or <code>none</code>, or a table with sub-keys <code>space</code>, <code>nbsp</code>, <code>nnbsp</code>, <code>tab</code>, and <code>newline</code></td><td><code>"none"</code></td></tr>
 <tr><td><code>characters</code></td><td>Literal characters to use when rendering whitespace. Sub-keys may be any of <code>tab</code>, <code>space</code>, <code>nbsp</code>, <code>nnbsp</code>, <code>newline</code> or <code>tabpad</code></td><td>See example below</td></tr>
 </tbody></table>
 </div>
@@ -2322,7 +2330,7 @@ tabpad = "·" # Tabs will look like "→···" (depending on tab width)
 <p>Options for rendering vertical indent guides.</p>
 <div class="table-wrapper"><table><thead><tr><th>Key</th><th>Description</th><th>Default</th></tr></thead><tbody>
 <tr><td><code>render</code></td><td>Whether to render indent guides</td><td><code>false</code></td></tr>
-<tr><td><code>character</code></td><td>Literal character to use for rendering the indent guide</td><td><code>│</code></td></tr>
+<tr><td><code>character</code></td><td>Literal character to use for rendering the indent guide</td><td><code>"│"</code></td></tr>
 <tr><td><code>skip-levels</code></td><td>Number of indent levels to skip</td><td><code>0</code></td></tr>
 </tbody></table>
 </div>
@@ -2374,7 +2382,7 @@ These colors are controlled by the theme attributes <code>diff.plus</code>, <cod
 <tr><td><code>enable</code></td><td>Whether soft wrapping is enabled.</td><td><code>false</code></td></tr>
 <tr><td><code>max-wrap</code></td><td>Maximum free space left at the end of the line.</td><td><code>20</code></td></tr>
 <tr><td><code>max-indent-retain</code></td><td>Maximum indentation to carry over when soft wrapping a line.</td><td><code>40</code></td></tr>
-<tr><td><code>wrap-indicator</code></td><td>Text inserted before soft wrapped lines, highlighted with <code>ui.virtual.wrap</code></td><td><code>↪ </code></td></tr>
+<tr><td><code>wrap-indicator</code></td><td>Text inserted before soft wrapped lines, highlighted with <code>ui.virtual.wrap</code></td><td><code>"↪ "</code></td></tr>
 <tr><td><code>wrap-at-text-width</code></td><td>Soft wrap at <code>text-width</code> instead of using the full viewport size.</td><td><code>false</code></td></tr>
 </tbody></table>
 </div>

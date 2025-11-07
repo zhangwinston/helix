@@ -183,6 +183,7 @@ Languages</a> guide for more language configuration information.</p>
 <tr><td>bitbake</td><td>✓</td><td></td><td></td><td></td><td></td><td><code>bitbake-language-server</code></td></tr>
 <tr><td>blade</td><td>✓</td><td>✓</td><td></td><td></td><td>✓</td><td></td></tr>
 <tr><td>blueprint</td><td>✓</td><td></td><td></td><td></td><td></td><td><code>blueprint-compiler</code></td></tr>
+<tr><td>bovex</td><td>✓</td><td></td><td></td><td></td><td>✓</td><td></td></tr>
 <tr><td>c</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td><code>clangd</code></td></tr>
 <tr><td>c-sharp</td><td>✓</td><td>✓</td><td></td><td>✓</td><td></td><td><code>OmniSharp</code></td></tr>
 <tr><td>cabal</td><td></td><td></td><td></td><td></td><td></td><td><code>haskell-language-server-wrapper</code></td></tr>
@@ -225,6 +226,7 @@ Languages</a> guide for more language configuration information.</p>
 <tr><td>earthfile</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td><td><code>earthlyls</code></td></tr>
 <tr><td>edoc</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
 <tr><td>eex</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
+<tr><td>eiffel</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td><td><code>eiffel-language-server</code></td></tr>
 <tr><td>ejs</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
 <tr><td>elisp</td><td>✓</td><td></td><td></td><td>✓</td><td></td><td></td></tr>
 <tr><td>elixir</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td><code>elixir-ls</code>, <code>expert</code></td></tr>
@@ -249,7 +251,7 @@ Languages</a> guide for more language configuration information.</p>
 <tr><td>ghostty</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
 <tr><td>git-attributes</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
 <tr><td>git-cliff-config</td><td>✓</td><td>✓</td><td></td><td></td><td>✓</td><td><code>taplo</code>, <code>tombi</code></td></tr>
-<tr><td>git-commit</td><td>✓</td><td>✓</td><td></td><td></td><td></td><td></td></tr>
+<tr><td>git-commit</td><td>✓</td><td>✓</td><td></td><td></td><td></td><td><code>commit-lsp</code></td></tr>
 <tr><td>git-config</td><td>✓</td><td>✓</td><td></td><td></td><td></td><td></td></tr>
 <tr><td>git-ignore</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
 <tr><td>git-notes</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
@@ -303,11 +305,12 @@ Languages</a> guide for more language configuration information.</p>
 <tr><td>json</td><td>✓</td><td>✓</td><td>✓</td><td></td><td>✓</td><td><code>vscode-json-language-server</code></td></tr>
 <tr><td>json-ld</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td><td><code>vscode-json-language-server</code></td></tr>
 <tr><td>json5</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
-<tr><td>jsonc</td><td>✓</td><td></td><td>✓</td><td></td><td></td><td><code>vscode-json-language-server</code></td></tr>
+<tr><td>jsonc</td><td>✓</td><td></td><td>✓</td><td></td><td>✓</td><td><code>vscode-json-language-server</code></td></tr>
 <tr><td>jsonnet</td><td>✓</td><td></td><td></td><td></td><td></td><td><code>jsonnet-language-server</code></td></tr>
 <tr><td>jsx</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td><code>typescript-language-server</code></td></tr>
 <tr><td>julia</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td><td><code>julia</code></td></tr>
 <tr><td>just</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td><td><code>just-lsp</code></td></tr>
+<tr><td>kcl</td><td>✓</td><td></td><td></td><td></td><td></td><td><code>kcl-language-server</code></td></tr>
 <tr><td>kconfig</td><td>✓</td><td></td><td>✓</td><td></td><td></td><td></td></tr>
 <tr><td>kdl</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td></tr>
 <tr><td>koka</td><td>✓</td><td></td><td>✓</td><td></td><td></td><td><code>koka</code></td></tr>
@@ -329,17 +332,19 @@ Languages</a> guide for more language configuration information.</p>
 <tr><td>mail</td><td>✓</td><td>✓</td><td></td><td></td><td></td><td></td></tr>
 <tr><td>make</td><td>✓</td><td></td><td>✓</td><td></td><td></td><td></td></tr>
 <tr><td>markdoc</td><td>✓</td><td></td><td></td><td></td><td></td><td><code>markdoc-ls</code></td></tr>
-<tr><td>markdown</td><td>✓</td><td></td><td></td><td>✓</td><td></td><td><code>marksman</code>, <code>markdown-oxide</code></td></tr>
+<tr><td>markdown</td><td>✓</td><td></td><td></td><td>✓</td><td></td><td><code>marksman</code>, <code>markdown-oxide</code>, <code>rumdl</code></td></tr>
 <tr><td>markdown-rustdoc</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
 <tr><td>markdown.inline</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
 <tr><td>matlab</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td><td></td></tr>
 <tr><td>mermaid</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
 <tr><td>meson</td><td>✓</td><td></td><td>✓</td><td></td><td></td><td><code>mesonlsp</code></td></tr>
 <tr><td>mint</td><td></td><td></td><td></td><td></td><td></td><td><code>mint</code></td></tr>
+<tr><td>miseconfig</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td><td><code>taplo</code>, <code>tombi</code></td></tr>
 <tr><td>mojo</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td><td><code>pixi</code></td></tr>
 <tr><td>move</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
 <tr><td>msbuild</td><td>✓</td><td></td><td>✓</td><td></td><td></td><td></td></tr>
 <tr><td>nasm</td><td>✓</td><td>✓</td><td></td><td></td><td></td><td><code>asm-lsp</code></td></tr>
+<tr><td>nearley</td><td>✓</td><td></td><td></td><td></td><td>✓</td><td></td></tr>
 <tr><td>nestedtext</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td><td></td></tr>
 <tr><td>nginx</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
 <tr><td>nickel</td><td>✓</td><td></td><td>✓</td><td></td><td></td><td><code>nls</code></td></tr>
@@ -441,7 +446,7 @@ Languages</a> guide for more language configuration information.</p>
 <tr><td>typespec</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td><td><code>tsp-server</code></td></tr>
 <tr><td>typst</td><td>✓</td><td></td><td></td><td>✓</td><td></td><td><code>tinymist</code></td></tr>
 <tr><td>ungrammar</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
-<tr><td>unison</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td><td></td></tr>
+<tr><td>unison</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td></tr>
 <tr><td>uxntal</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
 <tr><td>v</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td><td><code>v-analyzer</code></td></tr>
 <tr><td>vala</td><td>✓</td><td>✓</td><td></td><td></td><td></td><td><code>vala-language-server</code></td></tr>
