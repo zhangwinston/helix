@@ -44,6 +44,8 @@ pub struct LanguageData {
     textobject_query: OnceCell<Option<TextObjectQuery>>,
     tag_query: OnceCell<Option<TagQuery>>,
     rainbow_query: OnceCell<Option<RainbowQuery>>,
+    // Cache for language string/comment type detection (FR-010 optimization)
+    has_string_or_comment_types: OnceCell<bool>,
 }
 
 impl LanguageData {
@@ -55,6 +57,7 @@ impl LanguageData {
             textobject_query: OnceCell::new(),
             tag_query: OnceCell::new(),
             rainbow_query: OnceCell::new(),
+            has_string_or_comment_types: OnceCell::new(),
         }
     }
 
@@ -1389,4 +1392,226 @@ mod test {
             source.len(),
         );
     }
+}
+
+/// IME (Input Method Editor) sensitive region types.
+///
+/// This enum identifies the type of region the cursor is in, which determines
+/// whether IME should be enabled or disabled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImeSensitiveRegion {
+    /// String content region (excluding leading quote).
+    /// IME should be enabled in this region.
+    StringContent,
+    /// Comment content region (excluding header symbols like `//`, `/*`).
+    /// IME should be enabled in this region.
+    CommentContent,
+    /// Code region (non-sensitive).
+    /// IME should be disabled in this region.
+    Code,
+    /// Entire file (when syntax parsing is unavailable, failed, or still in progress).
+    /// IME should be enabled in this region.
+    EntireFile,
+}
+
+/// Result of IME region detection, with optional byte span used for caching.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ImeRegionDetection {
+    pub region: ImeSensitiveRegion,
+    pub node_range: Option<(usize, usize)>,
+}
+
+impl ImeRegionDetection {
+    const fn new(region: ImeSensitiveRegion, node_range: Option<(usize, usize)>) -> Self {
+        Self { region, node_range }
+    }
+
+    const fn code() -> Self {
+        Self::new(ImeSensitiveRegion::Code, None)
+    }
+
+    fn entire_file(len_bytes: usize) -> Self {
+        Self::new(ImeSensitiveRegion::EntireFile, Some((0, len_bytes)))
+    }
+}
+
+/// Check if the language has string or comment types defined in its grammar.
+///
+/// This function checks the language configuration and highlights query to determine
+/// if the language supports string or comment node types. Used to implement FR-010:
+/// if a language doesn't have these types, the entire file is treated as IME sensitive.
+///
+/// # Arguments
+/// * `loader` - The syntax loader to access language configuration
+/// * `language` - The language identifier
+///
+/// # Returns
+/// `true` if the language has string or comment types, `false` otherwise.
+///
+/// # Performance
+/// This function uses a OnceCell cache to avoid repeated file I/O operations.
+/// The result is computed once per language and cached for the lifetime of the Loader.
+fn language_has_string_or_comment_types(loader: &Loader, language: Language) -> bool {
+    let language_data = loader.language(language);
+
+    // Use cached result if available, otherwise compute and cache
+    *language_data.has_string_or_comment_types.get_or_init(|| {
+        let config = language_data.config();
+
+        // Check if language has comment tokens configured (indicates comment support)
+        let has_comment = config.comment_tokens.is_some() || config.block_comment_tokens.is_some();
+
+        // Check if language has string types by examining highlights query
+        // Most languages with string support will have @string captures in highlights.scm
+        let has_string = {
+            let highlight_query = read_query(&config.language_id, "highlights.scm");
+            // Check if the query contains @string capture
+            highlight_query.contains("@string") || highlight_query.contains("string")
+        };
+
+        has_comment || has_string
+    })
+}
+
+/// Detect IME sensitive region at the given cursor position.
+///
+/// This function queries the syntax tree to determine if the cursor is in a
+/// string content region, comment content region, or code region.
+///
+/// # Arguments
+/// * `syntax` - The syntax tree for the document (None if parsing unavailable/failed/in progress)
+/// * `source` - The document text
+/// * `loader` - The syntax loader for query compilation
+/// * `cursor_pos` - The cursor position in bytes
+///
+/// # Returns
+/// The detected IME sensitive region type.
+///
+/// # Behavior
+/// - Returns `EntireFile` if syntax parsing is unavailable, failed, or still in progress (FR-008, FR-009, FR-021)
+/// - Returns `EntireFile` if language doesn't have string/comment types (FR-010)
+/// - Detects comment and string regions by checking node types (simplified approach)
+/// - Excludes leading quote symbols (FR-004) and comment header symbols (FR-005)
+/// - Includes trailing quote first character (FR-006) and comment tail first character (FR-007)
+pub fn detect_ime_sensitive_region(
+    syntax: Option<&Syntax>,
+    source: RopeSlice, // Used for full file fallback caching
+    loader: &Loader,   // Now used to check language configuration
+    cursor_pos: usize,
+) -> ImeRegionDetection {
+    // If syntax parsing is unavailable, failed, or still in progress, treat entire file as sensitive
+    let Some(syntax) = syntax else {
+        log::trace!("IME region detection: syntax unavailable, returning EntireFile");
+        return ImeRegionDetection::entire_file(source.len_bytes());
+    };
+
+    let cursor_pos_u32 = cursor_pos as u32;
+
+    let language = syntax.root_language();
+    if !language_has_string_or_comment_types(loader, language) {
+        log::trace!(
+            "IME region detection: language has no string/comment types, returning EntireFile (FR-010)"
+        );
+        return ImeRegionDetection::entire_file(source.len_bytes());
+    }
+
+    // Get the node at cursor position (including unnamed nodes)
+    let Some(node) = syntax
+        .tree()
+        .root_node()
+        .descendant_for_byte_range(cursor_pos_u32, cursor_pos_u32)
+    else {
+        // If we can't find a node, treat as code (non-sensitive)
+        log::trace!(
+            "IME region detection: no node found at cursor_pos={}, returning Code",
+            cursor_pos
+        );
+        return ImeRegionDetection::code();
+    };
+
+    // Check if the current node or any of its parents is a comment or string node
+    // We need to check parents because the cursor might be in a child node
+    let mut current_check = Some(node);
+    while let Some(n) = current_check {
+        let node_kind = n.kind();
+        let node_start = n.start_byte() as usize;
+        let node_end = n.end_byte() as usize;
+
+        log::trace!(
+            "IME region detection: checking node_kind={}, node_range=[{}, {})",
+            node_kind,
+            node_start,
+            node_end
+        );
+
+        // Check if node type contains "comment" (case-insensitive check for robustness)
+        if node_kind.to_lowercase().contains("comment") {
+            if cursor_pos >= node_start && cursor_pos < node_end {
+                // Exclude comment header symbols (FR-005)
+                if cursor_pos == node_start {
+                    log::trace!(
+                        "IME region detection: found comment node at start, returning Code"
+                    );
+                    return ImeRegionDetection::code();
+                }
+                // Include comment tail first character (FR-007)
+                if cursor_pos == node_end - 1 {
+                    log::trace!(
+                        "IME region detection: found comment node at end, returning CommentContent"
+                    );
+                    return ImeRegionDetection::new(
+                        ImeSensitiveRegion::CommentContent,
+                        Some((node_start.saturating_add(1), node_end)),
+                    );
+                }
+                log::trace!(
+                    "IME region detection: found comment node in content, returning CommentContent"
+                );
+                return ImeRegionDetection::new(
+                    ImeSensitiveRegion::CommentContent,
+                    Some((node_start.saturating_add(1), node_end)),
+                );
+            }
+        }
+
+        // Check if node type contains "string" (excluding string_start and string_end)
+        if node_kind.contains("string")
+            && !node_kind.contains("string_start")
+            && !node_kind.contains("string_end")
+        {
+            if cursor_pos >= node_start && cursor_pos < node_end {
+                // Exclude leading quote symbols (FR-004)
+                if cursor_pos == node_start {
+                    log::trace!("IME region detection: found string node at start, returning Code");
+                    return ImeRegionDetection::code();
+                }
+                // Include trailing quote first character (FR-006)
+                if cursor_pos == node_end - 1 {
+                    log::trace!(
+                        "IME region detection: found string node at end, returning StringContent"
+                    );
+                    return ImeRegionDetection::new(
+                        ImeSensitiveRegion::StringContent,
+                        Some((node_start.saturating_add(1), node_end)),
+                    );
+                }
+                log::trace!(
+                    "IME region detection: found string node in content, returning StringContent"
+                );
+                return ImeRegionDetection::new(
+                    ImeSensitiveRegion::StringContent,
+                    Some((node_start.saturating_add(1), node_end)),
+                );
+            }
+        }
+
+        current_check = n.parent();
+    }
+
+    // If we didn't find a comment or string node at the cursor position,
+    // check if the language has string/comment types defined in its grammar (FR-010)
+    // If the language doesn't have these types, treat entire file as sensitive
+    // Default to code region (non-sensitive)
+    log::trace!("IME region detection: no comment/string node found, returning Code");
+    ImeRegionDetection::code()
 }

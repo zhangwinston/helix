@@ -24,6 +24,7 @@ use crate::{
     compositor::{Compositor, Event},
     config::Config,
     handlers,
+    handlers::ime,
     job::Jobs,
     keymap::Keymaps,
     ui::{self, overlay::overlaid},
@@ -237,6 +238,13 @@ impl Application {
             editor
                 .new_file_from_stdin(Action::VerticalSplit)
                 .unwrap_or_else(|_| editor.new_file(Action::VerticalSplit));
+        }
+
+        // Initialize IME state for all views on startup
+        // This ensures IME is closed in Normal mode (FR-001)
+        let view_ids: Vec<_> = editor.tree.views().map(|(view, _)| view.id).collect();
+        for view_id in view_ids {
+            ime::initialize_view_ime_state(&mut editor, view_id);
         }
 
         #[cfg(windows)]
