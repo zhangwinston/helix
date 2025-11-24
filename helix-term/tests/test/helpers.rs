@@ -57,6 +57,7 @@ impl Default for LineFeedHandling {
     }
 }
 
+#[allow(dead_code)] // Used in integration tests; keep field for future expansions
 #[derive(Clone, Debug)]
 pub struct TestCase {
     pub in_text: String,
@@ -65,6 +66,7 @@ pub struct TestCase {
     pub out_text: String,
     pub out_selection: Selection,
 
+    #[cfg_attr(any(test, feature = "integration"), allow(dead_code))]
     pub line_feed_handling: LineFeedHandling,
 }
 
