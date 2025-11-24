@@ -44,7 +44,7 @@ use helix_core::{
 };
 
 use crate::{
-    editor::Config,
+    editor::{Config, ImeState},
     events::{DocumentDidChange, SelectionDidChange},
     expansion,
     view::ViewPosition,
@@ -1908,6 +1908,10 @@ impl Document {
         self.syntax.as_ref()
     }
 
+    pub fn syntax_loader(&self) -> Arc<syntax::Loader> {
+        self.syn_loader.load_full()
+    }
+
     /// The width that the tab character is rendered at
     pub fn tab_width(&self) -> usize {
         self.editor_config
@@ -1981,6 +1985,14 @@ impl Document {
 
     fn view_data_mut(&mut self, view_id: ViewId) -> &mut ViewData {
         self.view_data.entry(view_id).or_default()
+    }
+
+    pub fn ime_state(&self, view_id: ViewId) -> Option<&ImeState> {
+        self.view_data.get(&view_id).map(ViewData::ime_state)
+    }
+
+    pub fn ime_state_mut(&mut self, view_id: ViewId) -> &mut ImeState {
+        self.view_data_mut(view_id).ime_state_mut()
     }
 
     pub(crate) fn get_view_offset(&self, view_id: ViewId) -> Option<ViewPosition> {
@@ -2313,9 +2325,29 @@ impl Document {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct ViewData {
     view_position: ViewPosition,
+    ime_state: ImeState,
+}
+
+impl Default for ViewData {
+    fn default() -> Self {
+        Self {
+            view_position: ViewPosition::default(),
+            ime_state: ImeState::default(),
+        }
+    }
+}
+
+impl ViewData {
+    fn ime_state(&self) -> &ImeState {
+        &self.ime_state
+    }
+
+    fn ime_state_mut(&mut self) -> &mut ImeState {
+        &mut self.ime_state
+    }
 }
 
 #[derive(Clone, Debug)]
