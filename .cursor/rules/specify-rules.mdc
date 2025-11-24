@@ -1,0 +1,32 @@
+﻿# helix Development Guidelines
+
+Auto-generated from all feature plans. Last updated: 2025-11-15
+
+## Active Technologies
+- Rust 1.82 (MSRV per Firefox policy) + tree-house (tree-sitter wrapper), ropey (rope data structure), helix-event (事件系统), 平台特定IME API (imm32.dll for Windows, IBus/FCITX D-Bus for Linux, TIS for macOS) (001-ime-auto-control)
+- N/A (IME状态存储在Editor结构体的HashMap中，内存存储) (001-ime-auto-control)
+
+- Rust (stable, MSRV per Firefox policy) (001-ime-auto-control)
+
+## Project Structure
+
+```text
+src/
+tests/
+```
+
+## Commands
+
+cargo test; cargo clippy
+
+## Code Style
+
+Rust (stable, MSRV per Firefox policy): Follow standard conventions
+
+## Recent Changes
+- 001-ime-auto-control: Added Rust 1.82 (MSRV per Firefox policy) + tree-house (tree-sitter wrapper), ropey (rope data structure), helix-event (事件系统), 平台特定IME API (imm32.dll for Windows, IBus/FCITX D-Bus for Linux, TIS for macOS)
+
+- 001-ime-auto-control: Added Rust (stable, MSRV per Firefox policy)
+
+<!-- MANUAL ADDITIONS START -->
+<!-- MANUAL ADDITIONS END -->

@@ -18,6 +18,8 @@ mod test {
     mod auto_pairs;
     mod command_line;
     mod commands;
+    mod ime;
+    mod languages;
     mod movement;
     mod splits;
 }
