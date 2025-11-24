@@ -48,6 +48,7 @@ use helix_core::{
     syntax::{
         self,
         config::{AutoPairConfig, IndentationHeuristic, LanguageServerFeature, SoftWrap},
+        ImeSensitiveRegion,
     },
     Change, LineEnding, Position, Range, Selection, Uri, NATIVE_LINE_ENDING,
 };
@@ -64,6 +65,17 @@ use arc_swap::{
 
 pub const DIR_STACK_CAP: usize = 10;
 pub const DEFAULT_AUTO_SAVE_DELAY: u64 = 3000;
+
+/// IME state information for a view.
+///
+/// Each view maintains its own IME state independently.
+#[derive(Debug, Clone, Default)]
+pub struct ImeState {
+    /// Saved IME state (None means not saved, Some(true) means enabled, Some(false) means disabled).
+    pub saved_state: Option<bool>,
+    /// Current IME sensitive region type (cached to avoid redundant detection).
+    pub current_region: Option<ImeSensitiveRegion>,
+}
 
 fn deserialize_duration_millis<'de, D>(deserializer: D) -> Result<Duration, D::Error>
 where
