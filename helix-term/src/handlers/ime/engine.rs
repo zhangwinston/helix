@@ -143,12 +143,11 @@ impl<'ctx> ImeEngine<'ctx> {
                 log::trace!("IME engine: exiting insert from non-sensitive region, keeping saved_state={:?}", self.ctx.saved_state);
             }
         } else {
-            // No current region: save state as fallback
-            log::trace!(
-                "IME engine: exiting insert with no current region, saving state={}",
-                current_ime_enabled
+            // No current region: this should not happen if region detection is working correctly.
+            // Don't save state as fallback, as we can't determine if we're in a sensitive region.
+            log::warn!(
+                "IME engine: exiting insert with no current region, not saving state (region should have been detected)"
             );
-            self.ctx.saved_state = Some(current_ime_enabled);
         }
         self.ctx.current_region = None;
         self.ctx.mode = Mode::Normal;
@@ -177,7 +176,19 @@ impl<'ctx> ImeEngine<'ctx> {
     }
 }
 
-fn is_sensitive(region: ImeSensitiveRegion) -> bool {
+/// Check if a region is IME-sensitive.
+///
+/// IME-sensitive regions are those where IME should be enabled:
+/// - String content (excluding leading quotes)
+/// - Comment content (excluding header symbols)
+/// - Entire file (when syntax parsing is unavailable)
+///
+/// # Arguments
+/// * `region` - The IME sensitive region to check
+///
+/// # Returns
+/// `true` if the region is IME-sensitive, `false` otherwise
+pub fn is_sensitive(region: ImeSensitiveRegion) -> bool {
     matches!(
         region,
         ImeSensitiveRegion::StringContent
