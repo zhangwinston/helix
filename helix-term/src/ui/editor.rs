@@ -3,6 +3,7 @@ use crate::{
     compositor::{Component, Context, Event, EventResult},
     events::{OnModeSwitch, PostCommand},
     handlers::completion::CompletionItem,
+    handlers::ime::platform::{is_ime_enabled, set_ime_enabled},
     key,
     keymap::{KeymapResult, Keymaps},
     ui::{
@@ -1079,7 +1080,29 @@ impl EditorView {
                 // set the register
                 cxt.register = cxt.editor.selected_register.take();
 
+                // Handle ESC key in Normal mode: close IME if enabled
+                // This ensures consistency when user manually enabled IME in Normal mode
+                // We check this before handle_keymap_event because ESC might be mapped to a command
+                // but we still want to close IME when ESC is pressed in Normal mode
+                if mode == Mode::Normal && key!(Esc) == event {
+                    // Check if IME is currently enabled
+                    if let Ok(ime_enabled) = is_ime_enabled() {
+                        if ime_enabled {
+                            // Close IME to maintain consistency
+                            // Note: We don't update the IME cache here because:
+                            // 1. In Normal mode, IME should always be closed
+                            // 2. When entering Insert mode, the IME handler will re-detect and update the state
+                            if let Err(e) = set_ime_enabled(false) {
+                                log::error!("Failed to close IME on ESC in Normal mode: {}", e);
+                            } else {
+                                log::trace!("IME closed on ESC key in Normal mode");
+                            }
+                        }
+                    }
+                }
+
                 let res = self.handle_keymap_event(mode, cxt, event);
+                
                 if matches!(&res, Some(KeymapResult::NotFound)) {
                     self.on_next_key(OnKeyCallbackKind::Fallback, cxt, event);
                 }
