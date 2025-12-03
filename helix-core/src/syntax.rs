@@ -1531,7 +1531,15 @@ pub fn detect_ime_sensitive_region(
 
     // Check if the current node or any of its parents is a comment or string node
     // We need to check parents because the cursor might be in a child node
+    // Also check for code blocks in document languages (like Markdown)
+    let language_config = loader.language(language).config();
+    let is_document_language = matches!(
+        language_config.language_id.as_str(),
+        "markdown" | "markdown-rustdoc" | "markdown.inline"
+    );
+
     let mut current_check = Some(node);
+    let mut is_in_code_block = false;
     while let Some(n) = current_check {
         let node_kind = n.kind();
         let node_start = n.start_byte() as usize;
@@ -1544,10 +1552,30 @@ pub fn detect_ime_sensitive_region(
             node_end
         );
 
+        // For document languages, check if we're in a code block
+        if is_document_language && node_kind.contains("code_block") {
+            is_in_code_block = true;
+        }
+
         // Check if node type contains "comment" (case-insensitive check for robustness)
-        if node_kind.to_lowercase().contains("comment") {
+        // Also explicitly check for comment_content which might be a child node type
+        let node_kind_lower = node_kind.to_lowercase();
+        let is_comment_node = node_kind_lower.contains("comment")
+            || node_kind == "comment_content";
+        
+        if is_comment_node {
             if cursor_pos >= node_start && cursor_pos < node_end {
-                // Exclude comment header symbols (FR-005)
+                // For comment_content nodes, they don't include the comment marker, so always treat as content
+                if node_kind == "comment_content" {
+                    log::trace!(
+                        "IME region detection: found comment_content node, returning CommentContent"
+                    );
+                    return ImeRegionDetection::new(
+                        ImeSensitiveRegion::CommentContent,
+                        Some((node_start, node_end)),
+                    );
+                }
+                // For other comment nodes, exclude comment header symbols (FR-005)
                 if cursor_pos == node_start {
                     log::trace!(
                         "IME region detection: found comment node at start, returning Code"
@@ -1575,12 +1603,25 @@ pub fn detect_ime_sensitive_region(
         }
 
         // Check if node type contains "string" (excluding string_start and string_end)
-        if node_kind.contains("string")
+        // Also explicitly check for string_content which is a common child node type
+        let is_string_node = (node_kind.contains("string")
             && !node_kind.contains("string_start")
-            && !node_kind.contains("string_end")
-        {
+            && !node_kind.contains("string_end"))
+            || node_kind == "string_content";
+        
+        if is_string_node {
             if cursor_pos >= node_start && cursor_pos < node_end {
-                // Exclude leading quote symbols (FR-004)
+                // For string_content nodes, they don't include quotes, so always treat as content
+                if node_kind == "string_content" {
+                    log::trace!(
+                        "IME region detection: found string_content node, returning StringContent"
+                    );
+                    return ImeRegionDetection::new(
+                        ImeSensitiveRegion::StringContent,
+                        Some((node_start, node_end)),
+                    );
+                }
+                // For other string nodes, exclude leading quote symbols (FR-004)
                 if cursor_pos == node_start {
                     log::trace!("IME region detection: found string node at start, returning Code");
                     return ImeRegionDetection::code();
@@ -1609,9 +1650,24 @@ pub fn detect_ime_sensitive_region(
     }
 
     // If we didn't find a comment or string node at the cursor position,
-    // check if the language has string/comment types defined in its grammar (FR-010)
-    // If the language doesn't have these types, treat entire file as sensitive
-    // Default to code region (non-sensitive)
+    // check if this is a document language (like Markdown) where the entire file
+    // should be treated as IME sensitive except for code blocks.
+    if is_document_language {
+        if is_in_code_block {
+            // Cursor is in a code block, treat as non-sensitive (Code)
+            log::trace!(
+                "IME region detection: found code_block node in document language, returning Code"
+            );
+            return ImeRegionDetection::code();
+        }
+        // Not in a code block, treat entire file as sensitive
+        log::trace!(
+            "IME region detection: document language (not in code block), returning EntireFile"
+        );
+        return ImeRegionDetection::entire_file(source.len_bytes());
+    }
+
+    // For other languages, default to code region (non-sensitive)
     log::trace!("IME region detection: no comment/string node found, returning Code");
     ImeRegionDetection::code()
 }
