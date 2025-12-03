@@ -26,8 +26,49 @@ use helix_view::{
 use crate::events::OnModeSwitch;
 
 use crate::handlers::ime::platform::{is_ime_enabled, set_ime_enabled};
-use engine::{ImeEngine, ImeRegionSpan};
+use engine::{is_sensitive, ImeEngine, ImeRegionSpan};
+use helix_view::document::Document;
 use std::time::Instant;
+
+/// Get the primary cursor byte position from a document and view.
+///
+/// This function extracts the cursor position from the primary selection
+/// and converts it to a byte offset for use in region detection.
+///
+/// # Arguments
+/// * `doc` - The document containing the text
+/// * `view_id` - The view ID to get the selection from
+///
+/// # Returns
+/// The cursor position as a byte offset
+fn get_cursor_byte_pos(doc: &Document, view_id: ViewId) -> usize {
+    let text = doc.text().slice(..);
+    let selection = doc.selection(view_id);
+    let primary_selection = selection.primary();
+    let cursor_pos = primary_selection.cursor(text);
+    text.char_to_byte(cursor_pos)
+}
+
+/// Update the cached IME state in the registry.
+///
+/// This function updates the cached IME state after a successful state change
+/// or when the cache needs to be refreshed (e.g., after detecting a manual toggle).
+///
+/// # Arguments
+/// * `doc_id` - Document ID for cache lookup
+/// * `view_id` - View ID for cache lookup
+/// * `mode` - Current editor mode
+/// * `new_state` - The new IME state to cache
+fn update_ime_cache(
+    doc_id: helix_view::DocumentId,
+    view_id: ViewId,
+    mode: Mode,
+    new_state: bool,
+) {
+    registry::with_context_mut(doc_id, view_id, mode, |ctx| {
+        ctx.cached_ime_state = Some(new_state);
+    });
+}
 
 /// Initialize IME context for a document+view combination.
 ///
@@ -56,17 +97,13 @@ pub fn initialize_view_ime_state(editor: &mut Editor, view_id: ViewId) {
             log::error!("Failed to close IME during view initialization: {}", e);
         } else {
             // Update cache after successful state change
-            registry::with_context_mut(doc_id, view_id, editor.mode(), |ctx| {
-                ctx.cached_ime_state = Some(false);
-            });
+            update_ime_cache(doc_id, view_id, editor.mode(), false);
             return;
         }
     }
 
     // Update cache even if IME was already disabled (or we failed to close it)
-    registry::with_context_mut(doc_id, view_id, editor.mode(), |ctx| {
-        ctx.cached_ime_state = Some(false);
-    });
+    update_ime_cache(doc_id, view_id, editor.mode(), false);
 }
 
 /// Handle cursor movement and update IME state accordingly.
@@ -104,13 +141,7 @@ pub fn handle_cursor_move(editor: &mut Editor, view_id: ViewId) -> Result<()> {
     let doc_version = doc.version();
 
     // Get primary cursor position (FR-020)
-    let text = doc.text().slice(..);
-    let selection = doc.selection(view_id);
-    let primary_selection = selection.primary();
-    let cursor_pos = primary_selection.cursor(text);
-
-    // Convert cursor position to byte offset
-    let cursor_byte_pos = text.char_to_byte(cursor_pos);
+    let cursor_byte_pos = get_cursor_byte_pos(doc, view_id);
 
     // Determine if we need to re-run region detection based on cursor position changes
     let needs_detection = registry::with_context_mut(doc_id, view_id, editor_mode, |ctx| {
@@ -148,6 +179,7 @@ pub fn handle_cursor_move(editor: &mut Editor, view_id: ViewId) -> Result<()> {
             region
         } else {
             metrics::record_region_detection();
+            let text = doc.text().slice(..);
             let syntax = doc.syntax();
             let loader = doc.syntax_loader();
             let detection = detect_ime_sensitive_region(syntax, text, &*loader, cursor_byte_pos);
@@ -166,12 +198,49 @@ pub fn handle_cursor_move(editor: &mut Editor, view_id: ViewId) -> Result<()> {
         }
     };
 
-    // Get cached IME state (fast, in lock)
-    let cached_ime_state =
-        registry::with_context_mut(doc_id, view_id, editor_mode, |ctx| ctx.cached_ime_state);
+    // Get cached IME state and current region (fast, in lock)
+    let (cached_ime_state, current_region, is_sensitive_region) = registry::with_context_mut(
+        doc_id,
+        view_id,
+        editor_mode,
+        |ctx| {
+            let is_sensitive_region = ctx
+                .current_region
+                .map(is_sensitive)
+                .unwrap_or(false);
+            (ctx.cached_ime_state, ctx.current_region, is_sensitive_region)
+        },
+    );
 
-    // Query system if cache miss (outside lock to avoid blocking)
-    let current_ime_enabled = cached_ime_state.unwrap_or_else(|| read_ime_enabled("cursor move"));
+    // Query system IME state:
+    // 1. If cache is empty (cache miss)
+    // 2. If we're in a sensitive region and region hasn't changed (user may have manually toggled IME)
+    //    In this case, we need to verify the cache is still valid
+    let region_unchanged = current_region == Some(new_region);
+    let is_new_region_sensitive = is_sensitive(new_region);
+    let should_verify_cache = cached_ime_state.is_some()
+        && is_sensitive_region
+        && is_new_region_sensitive
+        && region_unchanged;
+
+    let current_ime_enabled = if should_verify_cache {
+        // Region unchanged in sensitive area: verify cache by querying system
+        // This detects manual IME toggles by the user
+        let system_state = read_ime_enabled("cursor move (cache verification)");
+        // Update cache if it differs from system state
+        if cached_ime_state != Some(system_state) {
+            log::trace!(
+                "IME: Cache mismatch detected (cached={:?}, system={}), updating cache",
+                cached_ime_state,
+                system_state
+            );
+            update_ime_cache(doc_id, view_id, editor_mode, system_state);
+        }
+        system_state
+    } else {
+        // Cache miss or region changed: use cache if available, otherwise query system
+        cached_ime_state.unwrap_or_else(|| read_ime_enabled("cursor move"))
+    };
 
     // Decide what action to take (in lock, fast)
     let target_state = registry::with_context_mut(doc_id, view_id, editor_mode, |ctx| {
@@ -184,10 +253,8 @@ pub fn handle_cursor_move(editor: &mut Editor, view_id: ViewId) -> Result<()> {
         if let Err(e) = set_ime_enabled(target) {
             log::error!("Failed to toggle IME on cursor move: {}", e);
         } else {
-            // Update cache after successful state change (in lock, fast)
-            registry::with_context_mut(doc_id, view_id, editor_mode, |ctx| {
-                ctx.cached_ime_state = Some(target);
-            });
+            // Update cache after successful state change
+            update_ime_cache(doc_id, view_id, editor_mode, target);
         }
     }
 
@@ -215,13 +282,40 @@ pub fn handle_mode_switch(
     let doc_id = editor.tree.get(view_id).doc;
 
     if old_mode == Mode::Insert {
-        // Get cached IME state (fast, in lock)
-        let cached_ime_state =
-            registry::with_context_mut(doc_id, view_id, old_mode, |ctx| ctx.cached_ime_state);
+        // Always query the actual IME state when exiting Insert mode, don't rely on cache.
+        // This is important because the user may have manually enabled IME during Insert mode,
+        // and the cache might be stale (e.g., set to false during initialization).
+        let current_ime_enabled = read_ime_enabled("mode switch exit");
 
-        // Query system if cache miss (outside lock to avoid blocking)
-        let current_ime_enabled =
-            cached_ime_state.unwrap_or_else(|| read_ime_enabled("mode switch"));
+        // Check if we need to detect the region (if current_region is None)
+        let needs_region_detection = registry::with_context_mut(doc_id, view_id, old_mode, |ctx| {
+            ctx.current_region.is_none()
+        });
+
+        // If current_region is None, detect it before exiting Insert mode
+        // This ensures we can correctly decide whether to save the IME state
+        if needs_region_detection {
+            let doc = editor
+                .documents
+                .get_mut(&doc_id)
+                .ok_or_else(|| anyhow::anyhow!("Document not found"))?;
+            doc.ensure_view_init(view_id);
+
+            let cursor_byte_pos = get_cursor_byte_pos(doc, view_id);
+
+            // Get syntax tree and loader
+            let text = doc.text().slice(..);
+            let syntax = doc.syntax();
+            let loader = doc.syntax_loader();
+
+            // Detect IME sensitive region
+            let detection = detect_ime_sensitive_region(syntax, text, &*loader, cursor_byte_pos);
+
+            // Update context with detected region
+            registry::with_context_mut(doc_id, view_id, old_mode, |ctx| {
+                ctx.current_region = Some(detection.region);
+            });
+        }
 
         // Decide what action to take (in lock, fast)
         let target_state = registry::with_context_mut(doc_id, view_id, old_mode, |ctx| {
@@ -234,10 +328,8 @@ pub fn handle_mode_switch(
             if let Err(e) = set_ime_enabled(target) {
                 log::error!("Failed to close IME when exiting Insert mode: {}", e);
             } else {
-                // Update cache after successful state change (in lock, fast)
-                registry::with_context_mut(doc_id, view_id, old_mode, |ctx| {
-                    ctx.cached_ime_state = Some(target);
-                });
+                // Update cache after successful state change
+                update_ime_cache(doc_id, view_id, old_mode, target);
             }
         }
     }
@@ -246,20 +338,13 @@ pub fn handle_mode_switch(
 
     if new_mode == Mode::Insert {
         // Entering Insert mode: restore IME state if cursor is in sensitive region (FR-002, FR-013, FR-014)
-        // Get primary cursor position
         let doc = editor
             .documents
             .get_mut(&doc_id)
             .ok_or_else(|| anyhow::anyhow!("Document not found"))?;
         doc.ensure_view_init(view_id);
 
-        let text = doc.text().slice(..);
-        let selection = doc.selection(view_id);
-        let primary_selection = selection.primary();
-        let cursor_pos = primary_selection.cursor(text);
-
-        // Convert cursor position to byte offset
-        let cursor_byte_pos = text.char_to_byte(cursor_pos);
+        let cursor_byte_pos = get_cursor_byte_pos(doc, view_id);
 
         // Update cached cursor position
         registry::with_context_mut(doc_id, view_id, new_mode, |ctx| {
@@ -268,6 +353,7 @@ pub fn handle_mode_switch(
         let doc_version = doc.version();
 
         // Get syntax tree and loader
+        let text = doc.text().slice(..);
         let syntax = doc.syntax();
         let loader = doc.syntax_loader();
 
@@ -306,10 +392,8 @@ pub fn handle_mode_switch(
                     e
                 );
             } else {
-                // Update cache after successful state change (in lock, fast)
-                registry::with_context_mut(doc_id, view_id, new_mode, |ctx| {
-                    ctx.cached_ime_state = Some(target);
-                });
+                // Update cache after successful state change
+                update_ime_cache(doc_id, view_id, new_mode, target);
             }
         }
     }
