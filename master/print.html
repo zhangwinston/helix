@@ -1686,7 +1686,7 @@ Languages</a> guide for more language configuration information.</p>
 <tr><td>blueprint</td><td>✓</td><td></td><td></td><td></td><td></td><td><code>blueprint-compiler</code></td></tr>
 <tr><td>bovex</td><td>✓</td><td></td><td></td><td></td><td>✓</td><td></td></tr>
 <tr><td>c</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td><code>clangd</code></td></tr>
-<tr><td>c-sharp</td><td>✓</td><td>✓</td><td></td><td>✓</td><td></td><td><code>OmniSharp</code></td></tr>
+<tr><td>c-sharp</td><td>✓</td><td>✓</td><td></td><td>✓</td><td></td><td><code>OmniSharp</code>, <code>csharp-ls</code></td></tr>
 <tr><td>cabal</td><td></td><td></td><td></td><td></td><td></td><td><code>haskell-language-server-wrapper</code></td></tr>
 <tr><td>caddyfile</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td><td></td></tr>
 <tr><td>cairo</td><td>✓</td><td>✓</td><td>✓</td><td></td><td></td><td><code>cairo-language-server</code></td></tr>
@@ -1776,7 +1776,7 @@ Languages</a> guide for more language configuration information.</p>
 <tr><td>gren</td><td>✓</td><td>✓</td><td></td><td></td><td></td><td></td></tr>
 <tr><td>groovy</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
 <tr><td>gts</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td></td><td><code>typescript-language-server</code>, <code>vscode-eslint-language-server</code>, <code>ember-language-server</code></td></tr>
-<tr><td>hare</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
+<tr><td>hare</td><td>✓</td><td></td><td></td><td></td><td></td><td><code>hare-lsp</code></td></tr>
 <tr><td>haskell</td><td>✓</td><td>✓</td><td></td><td></td><td></td><td><code>haskell-language-server-wrapper</code></td></tr>
 <tr><td>haskell-literate</td><td>✓</td><td></td><td></td><td></td><td></td><td><code>haskell-language-server-wrapper</code></td></tr>
 <tr><td>haskell-persistent</td><td>✓</td><td></td><td></td><td></td><td></td><td></td></tr>
@@ -3912,7 +3912,7 @@ names of rules in the grammar. Brackets are usually written in tree-sitter
 grammars as literal strings, for example:</p>
 <pre><code class="language-js">{
   // ...
-  arguments: seq("(", repeat($.argument), ")"),
+  arguments: $ =&gt; seq("(", repeat($.argument), ")"),
   // ...
 }
 </code></pre>
