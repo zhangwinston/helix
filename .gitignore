@@ -4,3 +4,6 @@ helix-term/rustfmt.toml
 result
 runtime/grammars
 .DS_Store
+
+# Cursor IDE project data (avoids permission issues when switching branches)
+.cursor/
