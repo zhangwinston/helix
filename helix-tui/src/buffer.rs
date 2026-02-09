@@ -666,7 +666,9 @@ impl Buffer {
     }
 
     /// Builds a minimal sequence of coordinates and Cells necessary to update the UI from
-    /// self to other.
+    /// self to other. For wide characters with a blank trailing cell, the update list emits
+    /// that trailing cell before the leading cell so that terminals which do not clear the
+    /// second cell (e.g. Windows conhost) display CJK correctly after scrolling.
     ///
     /// We're assuming that buffers are well-formed, that is no double-width cell is followed by
     /// a non-blank cell.
@@ -705,13 +707,55 @@ impl Buffer {
         // place (the skipped cells should be blank anyway):
         let mut to_skip: usize = 0;
         for (i, (current, previous)) in next_buffer.iter().zip(previous_buffer.iter()).enumerate() {
-            if (current != previous || invalidated > 0) && to_skip == 0 {
+            // Skip the trailing (blank) cell of a wide char whenever it is blank. Sending a space
+            // there would overwrite the wide char's second half on screen (e.g. 中 showing as [half][ ])
+            // and make the following text appear shifted (e.g. " clau" instead of "claud"). When we
+            // need to clear that cell (e.g. popup closed), we do it from the leading cell via
+            // emit_trailing_first + at_leading_trailing_changed instead.
+            let skip_trailing_blank = to_skip > 0 && current.symbol == " ";
+            // Require i+1 in bounds for both buffers (they share the same area in practice).
+            let trailing_changed = i + 1 < next_buffer.len()
+                && i + 1 < previous_buffer.len()
+                && next_buffer[i + 1] != previous_buffer[i + 1];
+            let current_width = current.symbol.width();
+            // Only when the trailing cell became blank (e.g. popup closed): re-emit trailing then
+            // leading so we clear the border and redraw the wide char. Do NOT do this when the
+            // trailing cell got new content (e.g. popup opened, border drawn there), or we would
+            // redraw the wide char and then overwrite it with the border, making the border look shifted.
+            let at_leading_trailing_changed = to_skip == 0
+                && current_width > 1
+                && trailing_changed
+                && i + 1 < next_buffer.len()
+                && next_buffer[i + 1].symbol == " ";
+            let should_emit_leading = ((current != previous || invalidated > 0) && !skip_trailing_blank)
+                || at_leading_trailing_changed;
+            if should_emit_leading {
                 let x = (i % width as usize) as u16;
                 let y = (i / width as usize) as u16;
+                // Emit trailing cell before leading when trailing is blank, so terminals that
+                // don't clear the second cell (e.g. Windows conhost) get it cleared first. Do this
+                // when we're adding the leading or when only the trailing changed (e.g. popup closed).
+                let trailing_blank = i + 1 < next_buffer.len() && next_buffer[i + 1].symbol == " ";
+                let emit_trailing_first = current_width > 1
+                    && i + current_width <= next_buffer.len()
+                    && trailing_blank
+                    && (trailing_changed || (current != previous || invalidated > 0));
+                if emit_trailing_first {
+                    let x_trail = (i + 1) % width as usize;
+                    let y_trail = (i + 1) / width as usize;
+                    if y_trail == (i / width as usize) {
+                        updates.push((
+                            x_trail as u16,
+                            y_trail as u16,
+                            &next_buffer[i + 1],
+                        ));
+                    }
+                }
+                // Push leading: when content changed, or when we only cleared the trailing (popup
+                // closed) so we must redraw the wide char to span both cells again.
                 updates.push((x, y, &next_buffer[i]));
             }
 
-            let current_width = current.symbol.width();
             to_skip = current_width.saturating_sub(1);
 
             let affected_width = std::cmp::max(current_width, previous.symbol.width());
@@ -915,13 +959,14 @@ mod tests {
             "└──────┘  ",
         ]);
         let diff = prev.diff(&next);
+        // Wide chars: trailing cell emitted before leading so conhost clears second cell first.
         assert_eq!(
             diff,
             vec![
+                (2, 0, &cell(" ")),
                 (1, 0, &cell("称")),
-                // Skipped "i"
+                (4, 0, &cell(" ")),
                 (3, 0, &cell("号")),
-                // Skipped "l"
                 (5, 0, &cell("─")),
             ]
         );
@@ -933,9 +978,16 @@ mod tests {
         let next = Buffer::with_lines(vec!["┌─称号─┐"]);
 
         let diff = prev.diff(&next);
+        // Same as above: trailing before leading for wide characters.
         assert_eq!(
             diff,
-            vec![(1, 0, &cell("─")), (2, 0, &cell("称")), (4, 0, &cell("号")),]
+            vec![
+                (1, 0, &cell("─")),
+                (3, 0, &cell(" ")),
+                (2, 0, &cell("称")),
+                (5, 0, &cell(" ")),
+                (4, 0, &cell("号")),
+            ]
         );
     }
 
