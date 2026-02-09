@@ -163,7 +163,11 @@ impl Decoration for Cursor<'_> {
         renderer: &mut TextRenderer,
         grapheme: &FormattedGrapheme,
     ) -> usize {
-        if renderer.column_in_bounds(grapheme.visual_pos.col, grapheme.width())
+        // Only use document graphemes for cursor position. Wrap indicator and other virtual
+        // text share char_idx with the following character; using them would place the
+        // terminal cursor before the wrap indicator in insert mode instead of after it.
+        if !grapheme.is_virtual()
+            && renderer.column_in_bounds(grapheme.visual_pos.col, grapheme.width())
             && renderer.offset.row < grapheme.visual_pos.row
         {
             let position = grapheme.visual_pos - renderer.offset;
