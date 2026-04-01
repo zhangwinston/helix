@@ -1,6 +1,6 @@
 //! Windows IME control implementation using window messages.
 
-use super::ImeController;
+use super::{ImeController, ImeInfo, ImeCapabilities, ImeDetector, ImeType};
 use anyhow::{Context, Result};
 use once_cell::sync::Lazy;
 use std::sync::atomic::{AtomicPtr, Ordering};
@@ -11,6 +11,7 @@ use windows_sys::Win32::{
     UI::Input::Ime::ImmGetDefaultIMEWnd,
     UI::WindowsAndMessaging::{
         GetForegroundWindow, IsWindow, SendMessageA, WM_IME_CONTROL,
+        GetWindowTextLengthW, GetWindowTextW,
     },
 };
 
@@ -172,5 +173,84 @@ impl ImeController for WindowsImeController {
 
             Ok(())
         }
+    }
+
+    /// Get information about the current IME
+    fn get_ime_info() -> Result<ImeInfo> {
+        unsafe {
+            let hwnd = Self::get_valid_foreground_window()
+                .context("Failed to get foreground window for IME info")?;
+
+            if let Some(ime_wnd) = Self::get_ime_window(hwnd) {
+                // Try to get IME window title to identify the IME
+                let len = GetWindowTextLengthW(ime_wnd);
+                let mut buffer = vec![0u16; (len + 1) as usize];
+                let actual_len = GetWindowTextW(ime_wnd, buffer.as_mut_ptr(), buffer.len() as i32);
+
+                let name = if actual_len > 0 {
+                    String::from_utf16_lossy(&buffer[..actual_len as usize])
+                } else {
+                    "Unknown IME".to_string()
+                };
+
+                // Detect IME type and capabilities
+                let ime_type = ImeDetector::detect_ime_type(&name);
+                let capabilities = match ime_type {
+                    ImeType::Sogou | ImeType::GooglePinyin | ImeType::Baidu => {
+                        ImeCapabilities::FullControl
+                    }
+                    ImeType::Microsoft => ImeCapabilities::WithState,
+                    _ => ImeCapabilities::Basic,
+                };
+
+                Ok(ImeInfo {
+                    name,
+                    version: None, // Could be obtained from registry or file properties
+                    capabilities,
+                })
+            } else {
+                Ok(ImeInfo {
+                    name: "No IME".to_string(),
+                    version: None,
+                    capabilities: ImeCapabilities::Basic,
+                })
+            }
+        }
+    }
+
+    /// Check if any IME is available
+    fn is_ime_available() -> bool {
+        unsafe {
+            match Self::get_valid_foreground_window() {
+                Ok(hwnd) => Self::get_ime_window(hwnd).is_some(),
+                Err(_) => false,
+            }
+        }
+    }
+
+    /// Reset IME if needed (Windows-specific)
+    fn reset_if_needed() -> Result<()> {
+        // Windows IME generally doesn't need explicit reset
+        // But we can check if IME is responsive
+        match Self::is_ime_enabled() {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                log::warn!("IME not responsive, may need user intervention: {}", e);
+                Err(e)
+            }
+        }
+    }
+
+    /// Initialize Windows IME support
+    fn initialize() -> Result<()> {
+        // On Windows, ensure we have proper permissions for IME control
+        log::info!("Initializing Windows IME support");
+
+        // Test IME availability
+        if !Self::is_ime_available() {
+            log::warn!("No IME detected on system");
+        }
+
+        Ok(())
     }
 }

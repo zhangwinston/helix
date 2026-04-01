@@ -93,8 +93,6 @@ serde = { version = "1.0", features = ["derive"] }
 
 dashmap = "6.0"
 
-parking_lot.workspace = true
-
 [target.'cfg(windows)'.dependencies]
 crossterm = { version = "0.28", features = ["event-stream"] }
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_Input_Ime", "Win32_System_Console", "Win32_UI_WindowsAndMessaging"] }
