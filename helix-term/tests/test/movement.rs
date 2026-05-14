@@ -1,4 +1,14 @@
 use super::*;
+use std::cell::Cell;
+
+fn cursor_line(app: &helix_term::application::Application) -> usize {
+    let (view, doc) = helix_view::current_ref!(app.editor);
+    let cursor = doc
+        .selection(view.id)
+        .primary()
+        .cursor(doc.text().slice(..));
+    doc.text().char_to_line(cursor)
+}
 
 #[tokio::test(flavor = "multi_thread")]
 async fn insert_mode_cursor_position() -> anyhow::Result<()> {
@@ -61,6 +71,114 @@ async fn insert_to_normal_mode_cursor_position() -> anyhow::Result<()> {
         },
     ))
     .await?;
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn escape_interrupts_buffered_scrolling() -> anyhow::Result<()> {
+    let text = (0..600)
+        .map(|line| format!("{line:04}\n"))
+        .collect::<String>();
+    let input = format!("#[|]#{text}");
+
+    let baseline_line = Cell::new(None);
+    let mut baseline_app = AppBuilder::new().with_input_text(input.clone()).build()?;
+    let record_baseline = |app: &helix_term::application::Application| {
+        baseline_line.set(Some(cursor_line(app)));
+    };
+    test_key_sequence(
+        &mut baseline_app,
+        Some("<C-d>"),
+        Some(&record_baseline),
+        false,
+    )
+    .await?;
+
+    let interrupted_line = Cell::new(None);
+    let mut interrupted_app = AppBuilder::new().with_input_text(input).build()?;
+    let record_interrupted = |app: &helix_term::application::Application| {
+        interrupted_line.set(Some(cursor_line(app)));
+    };
+    test_key_sequence(
+        &mut interrupted_app,
+        Some("<C-d><C-d><esc><C-d><C-d>"),
+        Some(&record_interrupted),
+        false,
+    )
+    .await?;
+
+    assert_eq!(interrupted_line.get(), baseline_line.get());
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn escape_suppresses_followup_scroll_repeats() -> anyhow::Result<()> {
+    let text = (0..600)
+        .map(|line| format!("{line:04}\n"))
+        .collect::<String>();
+    let input = format!("#[|]#{text}");
+
+    let baseline_line = Cell::new(None);
+    let mut baseline_app = AppBuilder::new().with_input_text(input.clone()).build()?;
+    let record_baseline = |app: &helix_term::application::Application| {
+        baseline_line.set(Some(cursor_line(app)));
+    };
+    test_key_sequence(
+        &mut baseline_app,
+        Some("<C-d>"),
+        Some(&record_baseline),
+        false,
+    )
+    .await?;
+
+    let interrupted_line = Cell::new(None);
+    let mut interrupted_app = AppBuilder::new().with_input_text(input).build()?;
+    let record_interrupted = |app: &helix_term::application::Application| {
+        interrupted_line.set(Some(cursor_line(app)));
+    };
+    test_key_sequence(
+        &mut interrupted_app,
+        Some("<C-d><esc><C-d><C-d>"),
+        Some(&record_interrupted),
+        false,
+    )
+    .await?;
+
+    assert_eq!(interrupted_line.get(), baseline_line.get());
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn escape_interrupts_buffered_vertical_movement() -> anyhow::Result<()> {
+    let text = (0..600)
+        .map(|line| format!("{line:04}\n"))
+        .collect::<String>();
+    let input = format!("#[|]#{text}");
+
+    let baseline_line = Cell::new(None);
+    let mut baseline_app = AppBuilder::new().with_input_text(input.clone()).build()?;
+    let record_baseline = |app: &helix_term::application::Application| {
+        baseline_line.set(Some(cursor_line(app)));
+    };
+    test_key_sequence(&mut baseline_app, Some("j"), Some(&record_baseline), false).await?;
+
+    let interrupted_line = Cell::new(None);
+    let mut interrupted_app = AppBuilder::new().with_input_text(input).build()?;
+    let record_interrupted = |app: &helix_term::application::Application| {
+        interrupted_line.set(Some(cursor_line(app)));
+    };
+    test_key_sequence(
+        &mut interrupted_app,
+        Some("jj<esc>jj"),
+        Some(&record_interrupted),
+        false,
+    )
+    .await?;
+
+    assert_eq!(interrupted_line.get(), baseline_line.get());
 
     Ok(())
 }
