@@ -485,6 +485,16 @@ impl Application {
         let now = Instant::now();
         let key_parts = Self::terminal_key_event_parts(event);
 
+        // Clean up stale scroll keys periodically to prevent accumulation of keys
+        // that were never released due to terminal missing key release events
+        if let Some(until) = self.suppress_interruptible_scroll_until {
+            if now >= until {
+                self.suppress_interruptible_scroll_until = None;
+                self.held_interruptible_scroll_keys.clear();
+                self.suppressed_interruptible_scroll_keys.clear();
+            }
+        }
+
         if let Some(_command) = self.interruptible_scroll_event(event) {
             if let Some((key, kind)) = key_parts {
                 match kind {
@@ -596,7 +606,7 @@ impl Application {
                 ..
             }) => false,
             #[cfg(not(windows))]
-            event if event.is_escape() && !Self::is_escape_key_event(&event) => false,
+            event if event.is_escape() => false,
             event => self.compositor.handle_event(&event.into(), &mut cx),
         }
     }
@@ -1136,7 +1146,7 @@ impl Application {
                 ..
             }) => false,
             #[cfg(not(windows))]
-            event if event.is_escape() && !Self::is_escape_key_event(&event) => false,
+            event if event.is_escape() => false,
             event => self.compositor.handle_event(&event.into(), &mut cx),
         };
 
