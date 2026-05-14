@@ -63,7 +63,10 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn setup_test_document(app: &mut Application, view_id: helix_view::ViewId) -> Result<helix_view::DocumentId> {
+fn setup_test_document(
+    app: &mut Application,
+    view_id: helix_view::ViewId,
+) -> Result<helix_view::DocumentId> {
     let content = indoc::indoc! {r#"
         fn demonstrate_ime_features() {
             // This is a comment where IME should be enabled
@@ -103,14 +106,22 @@ fn test_error_handling(app: &mut Application, view_id: helix_view::ViewId) -> Re
     let positions = vec![10, 50, 100, 150, 200, 250, 300];
 
     for (i, pos_char) in positions.into_iter().enumerate() {
-        let doc = app.editor.documents.get_mut(&app.editor.tree.get(view_id).doc).unwrap();
+        let doc = app
+            .editor
+            .documents
+            .get_mut(&app.editor.tree.get(view_id).doc)
+            .unwrap();
         let pos_byte = doc.text().char_to_byte(pos_char);
         doc.set_selection(view_id, Selection::single(pos_char, pos_char));
 
         if let Err(e) = ime::handle_cursor_move(app, view_id) {
             println!("   ☐ Cursor move at position {} failed: {}", pos_char, e);
         } else {
-            println!("   ✓ Cursor move {} at position {} succeeded", i + 1, pos_char);
+            println!(
+                "   ✓ Cursor move {} at position {} succeeded",
+                i + 1,
+                pos_char
+            );
         }
     }
 
@@ -125,7 +136,11 @@ fn test_caching_behavior(app: &mut Application, view_id: helix_view::ViewId) -> 
     metrics::reset();
 
     // Move cursor to specific position
-    let doc = app.editor.documents.get_mut(&app.editor.tree.get(view_id).doc).unwrap();
+    let doc = app
+        .editor
+        .documents
+        .get_mut(&app.editor.tree.get(view_id).doc)
+        .unwrap();
     let comment_pos = doc.text().to_string().find("这是").unwrap_or(0);
     let comment_byte = doc.text().char_to_byte(comment_pos);
     doc.set_selection(view_id, Selection::single(comment_pos, comment_pos));
@@ -138,8 +153,14 @@ fn test_caching_behavior(app: &mut Application, view_id: helix_view::ViewId) -> 
     ime::handle_cursor_move(app, view_id)?;
     let snapshot2 = metrics::snapshot();
 
-    println!("   First move - Region detections: {}", snapshot1.region_detection_calls);
-    println!("   Second move - Region detections: {}", snapshot2.region_detection_calls);
+    println!(
+        "   First move - Region detections: {}",
+        snapshot1.region_detection_calls
+    );
+    println!(
+        "   Second move - Region detections: {}",
+        snapshot2.region_detection_calls
+    );
     println!("   Cache hits: {}", snapshot2.region_cache_hits);
 
     // Test moving to different regions
@@ -192,7 +213,11 @@ fn test_cleanup_mechanisms(app: &mut Application, view1_id: helix_view::ViewId) 
     for i in 0..3 {
         app.editor.switch(
             app.editor.tree.get(view1_id).doc,
-            if i % 2 == 0 { Action::VerticalSplit } else { Action::HorizontalSplit }
+            if i % 2 == 0 {
+                Action::VerticalSplit
+            } else {
+                Action::HorizontalSplit
+            },
         );
         view_ids.push(app.editor.tree.focus);
 

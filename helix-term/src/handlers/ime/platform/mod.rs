@@ -10,6 +10,7 @@ use std::collections::HashMap;
 #[derive(Debug, Clone)]
 pub struct ImeInfo {
     pub name: String,
+    #[allow(dead_code)]
     pub version: Option<String>,
     pub capabilities: ImeCapabilities,
 }
@@ -52,15 +53,6 @@ pub trait ImeController {
     ///
     /// Some systems may not have any IME installed or configured.
     fn is_ime_available() -> bool;
-
-    /// Reset IME state if needed.
-    ///
-    /// Some IMEs may need to be reset explicitly after certain operations
-    /// to ensure proper functionality.
-    fn reset_if_needed() -> Result<()> {
-        // Default implementation is no-op
-        Ok(())
-    }
 
     /// Perform platform-specific initialization.
     ///
@@ -107,8 +99,6 @@ impl ImeDetector {
             ImeType::Sogou => ImeSettings {
                 retry_count: 2,
                 retry_delay_ms: 20,
-                reset_threshold: 5,
-                use_fallback_api: false,
                 custom_settings: HashMap::from([
                     ("disable_animation".to_string(), "true".to_string()),
                     ("fast_switch".to_string(), "true".to_string()),
@@ -117,18 +107,15 @@ impl ImeDetector {
             ImeType::Microsoft => ImeSettings {
                 retry_count: 3,
                 retry_delay_ms: 10,
-                reset_threshold: 10,
-                use_fallback_api: false,
                 custom_settings: HashMap::new(),
             },
             ImeType::GooglePinyin => ImeSettings {
                 retry_count: 2,
                 retry_delay_ms: 15,
-                reset_threshold: 7,
-                use_fallback_api: true,
-                custom_settings: HashMap::from([
-                    ("enhanced_compatibility".to_string(), "true".to_string()),
-                ]),
+                custom_settings: HashMap::from([(
+                    "enhanced_compatibility".to_string(),
+                    "true".to_string(),
+                )]),
             },
             ImeType::Unknown => ImeSettings::default(),
             _ => ImeSettings::default(),
@@ -154,9 +141,11 @@ pub enum ImeType {
 #[derive(Debug, Clone)]
 pub struct ImeSettings {
     pub retry_count: u32,
+    /// Reserved for future tuning. IME read retries use [`std::thread::yield_now`] instead of
+    /// wall-clock sleep so blocking job threads are not parked for milliseconds.
+    #[allow(dead_code)]
     pub retry_delay_ms: u64,
-    pub reset_threshold: u32,
-    pub use_fallback_api: bool,
+    #[allow(dead_code)]
     pub custom_settings: HashMap<String, String>,
 }
 
@@ -165,8 +154,6 @@ impl Default for ImeSettings {
         Self {
             retry_count: 3,
             retry_delay_ms: 10,
-            reset_threshold: 10,
-            use_fallback_api: false,
             custom_settings: HashMap::new(),
         }
     }
@@ -207,17 +194,7 @@ pub fn get_ime_info() -> Result<ImeInfo> {
     PlatformImeController::get_ime_info()
 }
 
-/// Check if any IME is available
-pub fn is_ime_available() -> bool {
-    PlatformImeController::is_ime_available()
-}
-
 /// Initialize platform-specific IME support
 pub fn initialize() -> Result<()> {
     PlatformImeController::initialize()
-}
-
-/// Reset IME if needed
-pub fn reset_if_needed() -> Result<()> {
-    PlatformImeController::reset_if_needed()
 }

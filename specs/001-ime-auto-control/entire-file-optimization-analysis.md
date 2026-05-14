@@ -165,6 +165,51 @@ if is_entire_file {
 
 **推荐立即实施方案 1**，实现简单，风险低，性能收益明显。
 
+## 实施状态
+
+**状态**: ✅ 已完成 (2025-05-07)
+
+### 实施的方案
+
+采用了方案 1，在 `handle_cursor_move` 函数中添加了早期返回优化：
+
+```rust
+// OPTIMIZATION: Early check for EntireFile region
+// If the current region is already EntireFile, we can skip all detection
+// since the entire file is IME-sensitive and region never changes.
+// This avoids redundant syntax tree queries and IME state changes.
+let current_region = registry::with_context_mut(doc_id, view_id, editor_mode, |ctx| {
+    ctx.current_region
+});
+
+if current_region == Some(ImeSensitiveRegion::EntireFile) {
+    metrics::record_region_cache_hit();
+    metrics::record_cursor_move_duration(timer.elapsed());
+    log::trace!(
+        "IME: Skipping detection for EntireFile region (doc={:?}, view={:?})",
+        doc_id, view_id
+    );
+    return Ok(());
+}
+```
+
+### 测试覆盖
+
+新增测试用例：
+- `entire_file_is_sensitive`: 验证 EntireFile 被正确识别为敏感区域
+- `entire_file_region_change_does_not_disable_ime`: 验证 EntireFile 区域内的状态变化正确处理
+
+### 验证结果
+
+所有测试通过 (11/11)：
+```
+running 11 tests
+test handlers::ime::engine::tests::entire_file_is_sensitive ... ok
+test handlers::ime::engine::tests::entire_file_region_change_does_not_disable_ime ... ok
+...
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured
+```
+
 
 
 
