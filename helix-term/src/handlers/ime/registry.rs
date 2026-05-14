@@ -7,8 +7,8 @@ use helix_view::{document::Mode, editor::Editor, DocumentId, ViewId};
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 
-use anyhow::Result;
 use super::engine::ImeContext;
+use anyhow::Result;
 
 /// Global IME context registry.
 ///
@@ -55,14 +55,21 @@ impl ImeRegistry {
         if !self.contexts.contains_key(&key) {
             self.metrics.total_contexts_created += 1;
             self.metrics.current_contexts += 1;
-            self.metrics.max_concurrent_contexts = self.metrics.max_concurrent_contexts.max(self.metrics.current_contexts);
+            self.metrics.max_concurrent_contexts = self
+                .metrics
+                .max_concurrent_contexts
+                .max(self.metrics.current_contexts);
 
-            log::debug!("Creating new IME context for doc={}, view={:?}", doc_id, view_id);
+            log::debug!(
+                "Creating new IME context for doc={}, view={:?}",
+                doc_id,
+                view_id
+            );
         }
 
-        self.contexts.entry(key).or_insert_with(|| {
-            ImeContext::new(mode)
-        })
+        self.contexts
+            .entry(key)
+            .or_insert_with(|| ImeContext::new(mode))
     }
 
     fn prune_orphans(&mut self, editor: &Editor) {
@@ -107,7 +114,11 @@ impl ImeRegistry {
 
         let removed_count = initial_count - self.contexts.len();
         if removed_count > 0 {
-            log::debug!("Removed {} IME contexts for document {}", removed_count, doc_id);
+            log::debug!(
+                "Removed {} IME contexts for document {}",
+                removed_count,
+                doc_id
+            );
         }
     }
 
@@ -118,7 +129,8 @@ impl ImeRegistry {
         let initial_count = self.contexts.len();
 
         // Collect keys to remove
-        let to_remove: Vec<_> = self.last_access
+        let to_remove: Vec<_> = self
+            .last_access
             .iter()
             .filter_map(|(key, last_access)| {
                 if now.duration_since(*last_access) > max_age {
@@ -141,7 +153,11 @@ impl ImeRegistry {
 
         let removed_count = initial_count - self.contexts.len();
         if removed_count > 0 {
-            log::debug!("Cleaned up {} stale IME contexts (age > {:?})", removed_count, max_age);
+            log::debug!(
+                "Cleaned up {} stale IME contexts (age > {:?})",
+                removed_count,
+                max_age
+            );
         }
     }
 
@@ -216,13 +232,21 @@ pub fn verify_all_cached_states() -> Result<usize, anyhow::Error> {
                     if cached_state != actual_state {
                         log::warn!(
                             "IME state inconsistency for doc={}, view={:?}: cached={}, actual={}",
-                            doc_id, view_id, cached_state, actual_state
+                            doc_id,
+                            view_id,
+                            cached_state,
+                            actual_state
                         );
                         inconsistencies += 1;
                     }
                 }
                 Err(e) => {
-                    log::error!("Failed to verify IME state for doc={}, view={:?}: {}", doc_id, view_id, e);
+                    log::error!(
+                        "Failed to verify IME state for doc={}, view={:?}: {}",
+                        doc_id,
+                        view_id,
+                        e
+                    );
                     inconsistencies += 1;
                 }
             }
@@ -243,10 +267,19 @@ pub struct RegistryMetrics {
 }
 
 impl RegistryMetrics {
-    pub fn total_contexts_created(&self) -> u64 { self.total_contexts_created }
-    pub fn total_contexts_removed(&self) -> u64 { self.total_contexts_removed }
-    pub fn max_concurrent_contexts(&self) -> u64 { self.max_concurrent_contexts }
-    pub fn current_contexts(&self) -> u64 { self.current_contexts }
-    pub fn cleanup_count(&self) -> u64 { self.cleanup_count }
+    pub fn total_contexts_created(&self) -> u64 {
+        self.total_contexts_created
+    }
+    pub fn total_contexts_removed(&self) -> u64 {
+        self.total_contexts_removed
+    }
+    pub fn max_concurrent_contexts(&self) -> u64 {
+        self.max_concurrent_contexts
+    }
+    pub fn current_contexts(&self) -> u64 {
+        self.current_contexts
+    }
+    pub fn cleanup_count(&self) -> u64 {
+        self.cleanup_count
+    }
 }
-

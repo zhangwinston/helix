@@ -761,7 +761,8 @@ impl Buffer {
                 && trailing_changed
                 && i + 1 < next_buffer.len()
                 && next_buffer[i + 1].symbol == " ";
-            let should_emit_leading = ((current != previous || invalidated > 0) && !skip_trailing_blank)
+            let should_emit_leading = ((current != previous || invalidated > 0)
+                && !skip_trailing_blank)
                 || at_leading_trailing_changed;
             if should_emit_leading {
                 let x = (i % width as usize) as u16;
@@ -778,11 +779,7 @@ impl Buffer {
                     let x_trail = (i + 1) % width as usize;
                     let y_trail = (i + 1) / width as usize;
                     if y_trail == (i / width as usize) {
-                        updates.push((
-                            x_trail as u16,
-                            y_trail as u16,
-                            &next_buffer[i + 1],
-                        ));
+                        updates.push((x_trail as u16, y_trail as u16, &next_buffer[i + 1]));
                     }
                 }
                 // Push leading: when content changed, or when we only cleared the trailing (popup

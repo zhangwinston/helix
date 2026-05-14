@@ -352,8 +352,7 @@ async fn test_ime_enabled_in_unparseable_file_anywhere() -> anyhow::Result<()> {
     for pos in test_positions {
         if pos < text.len_chars() {
             let byte_pos = text.char_to_byte(pos);
-            let region =
-                detect_ime_sensitive_region(syntax, text, &*loader, byte_pos).region;
+            let region = detect_ime_sensitive_region(syntax, text, &*loader, byte_pos).region;
 
             // For unparseable files, should return EntireFile
             assert_eq!(
@@ -395,8 +394,7 @@ async fn test_ime_enabled_in_syntax_error_file_anywhere() -> anyhow::Result<()> 
     for pos in test_positions {
         if pos < text.len_chars() {
             let byte_pos = text.char_to_byte(pos);
-            let region =
-                detect_ime_sensitive_region(syntax, text, &*loader, byte_pos).region;
+            let region = detect_ime_sensitive_region(syntax, text, &*loader, byte_pos).region;
 
             // For syntax error files, should return EntireFile if syntax is None
             if syntax.is_none() {
@@ -560,8 +558,7 @@ async fn test_ime_region_detection_language_without_string_comment() -> anyhow::
         } else {
             0
         };
-        let region =
-            detect_ime_sensitive_region(Some(syntax), text, &*loader, byte_pos).region;
+        let region = detect_ime_sensitive_region(Some(syntax), text, &*loader, byte_pos).region;
 
         // If language doesn't have string or comment types, should return EntireFile
         if !has_comment && !has_string {
