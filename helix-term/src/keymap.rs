@@ -301,6 +301,43 @@ impl Keymaps {
             .is_some_and(|node| node.contains_key(&key))
     }
 
+    /// Lookup `key` in the current keymap state without mutating any pending
+    /// keys or sticky mode state.
+    pub fn peek(&self, mode: Mode, key: KeyEvent) -> KeymapResult {
+        let keymaps = &*self.map();
+        let keymap = &keymaps[&mode];
+
+        if key!(Esc) == key && !self.state.is_empty() {
+            return KeymapResult::Cancelled(self.state.clone());
+        }
+
+        let first = self.state.first().unwrap_or(&key);
+        let trie_node = match self.sticky {
+            Some(ref trie) => Cow::Owned(KeyTrie::Node(trie.clone())),
+            None => Cow::Borrowed(keymap),
+        };
+
+        let trie = match trie_node.search(&[*first]) {
+            Some(KeyTrie::MappableCommand(ref cmd)) => {
+                return KeymapResult::Matched(cmd.clone());
+            }
+            Some(KeyTrie::Sequence(ref cmds)) => {
+                return KeymapResult::MatchedSequence(cmds.clone());
+            }
+            None => return KeymapResult::NotFound,
+            Some(t) => t,
+        };
+
+        let mut state = self.state.clone();
+        state.push(key);
+        match trie.search(&state[1..]) {
+            Some(KeyTrie::Node(map)) => KeymapResult::Pending(map.clone()),
+            Some(KeyTrie::MappableCommand(cmd)) => KeymapResult::Matched(cmd.clone()),
+            Some(KeyTrie::Sequence(cmds)) => KeymapResult::MatchedSequence(cmds.clone()),
+            None => KeymapResult::Cancelled(state),
+        }
+    }
+
     /// Lookup `key` in the keymap to try and find a command to execute. Escape
     /// key cancels pending keystrokes. If there are no pending keystrokes but a
     /// sticky node is in use, it will be cleared.
@@ -614,5 +651,30 @@ is_sticky = false
         ));
 
         assert_eq!(toml::from_str(keys), Ok(expectation));
+    }
+
+    #[test]
+    fn peek_does_not_mutate_pending_state() {
+        let mut keymap = Keymaps::default();
+
+        assert!(matches!(
+            keymap.get(Mode::Normal, key!('g')),
+            KeymapResult::Pending(_)
+        ));
+        assert_eq!(keymap.pending(), &[key!('g')]);
+
+        let preview = keymap.peek(Mode::Normal, key!('e'));
+        assert!(matches!(
+            &preview,
+            KeymapResult::Matched(command) if command.name() == "goto_last_line"
+        ));
+        assert_eq!(keymap.pending(), &[key!('g')]);
+
+        let resolved = keymap.get(Mode::Normal, key!('e'));
+        assert!(matches!(
+            &resolved,
+            KeymapResult::Matched(command) if command.name() == "goto_last_line"
+        ));
+        assert!(keymap.pending().is_empty());
     }
 }
