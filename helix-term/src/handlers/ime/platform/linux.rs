@@ -1,6 +1,6 @@
 //! Linux IME control implementation using IBus/FCITX D-Bus interfaces.
 
-use super::{ImeController, ImeInfo, ImeCapabilities, ImeDetector, ImeType, ImeSettings};
+use super::{ImeCapabilities, ImeController, ImeDetector, ImeInfo, ImeSettings, ImeType};
 use anyhow::{Context, Result};
 use std::process::Command;
 use std::time::Duration;
@@ -96,8 +96,10 @@ impl ImeController for LinuxImeController {
             if result.status.success() {
                 Ok(())
             } else {
-                Err(anyhow::anyhow!("fcitx-remote failed: {}",
-                    String::from_utf8_lossy(&result.stderr)))
+                Err(anyhow::anyhow!(
+                    "fcitx-remote failed: {}",
+                    String::from_utf8_lossy(&result.stderr)
+                ))
             }
         } else {
             log::warn!("No IME daemon (IBus/FCITX) detected");
@@ -127,13 +129,11 @@ impl ImeController for LinuxImeController {
             }
         } else if Self::is_fcitx_running() {
             match Self::get_fcitx_engine() {
-                Ok(status) => {
-                    Ok(ImeInfo {
-                        name: format!("FCITX - {}", status),
-                        version: None,
-                        capabilities: ImeCapabilities::WithState,
-                    })
-                }
+                Ok(status) => Ok(ImeInfo {
+                    name: format!("FCITX - {}", status),
+                    version: None,
+                    capabilities: ImeCapabilities::WithState,
+                }),
                 Err(e) => {
                     log::error!("Failed to get FCITX status: {}", e);
                     Ok(ImeInfo {
@@ -156,22 +156,14 @@ impl ImeController for LinuxImeController {
         Self::is_ibus_running() || Self::is_fcitx_running()
     }
 
-    fn reset_if_needed() -> Result<()> {
-        // On Linux, we can restart the IME daemon if it's unresponsive
-        if Self::is_ibus_running() {
-            // Try to ping IBus
-            if let Err(_) = Self::get_ibus_engine() {
-                log::warn!("IBus is unresponsive, consider restarting ibus-daemon");
-            }
-        }
-        Ok(())
-    }
-
     fn initialize() -> Result<()> {
         log::info!("Initializing Linux IME support");
 
         if Self::is_ibus_running() {
             log::info!("IBus daemon detected");
+            if Self::get_ibus_engine().is_err() {
+                log::warn!("IBus is unresponsive, consider restarting ibus-daemon");
+            }
         } else if Self::is_fcitx_running() {
             log::info!("FCITX daemon detected");
         } else {

@@ -1,6 +1,6 @@
 //! Windows IME control implementation using window messages.
 
-use super::{ImeController, ImeInfo, ImeCapabilities, ImeDetector, ImeType};
+use super::{ImeCapabilities, ImeController, ImeDetector, ImeInfo, ImeType};
 use anyhow::{Context, Result};
 use once_cell::sync::Lazy;
 use std::sync::atomic::{AtomicPtr, Ordering};
@@ -10,8 +10,8 @@ use windows_sys::Win32::{
     Foundation::HWND,
     UI::Input::Ime::ImmGetDefaultIMEWnd,
     UI::WindowsAndMessaging::{
-        GetForegroundWindow, IsWindow, SendMessageA, WM_IME_CONTROL,
-        GetWindowTextLengthW, GetWindowTextW,
+        GetForegroundWindow, GetWindowTextLengthW, GetWindowTextW, IsWindow, SendMessageA,
+        WM_IME_CONTROL,
     },
 };
 
@@ -54,7 +54,10 @@ impl WindowsImeController {
             // This is necessary because IME state is tied to the foreground window
             let current_fg = GetForegroundWindow();
             if current_fg == cached_hwnd {
-                log::trace!("IME: Using cached foreground window handle: {:p}", cached_hwnd);
+                log::trace!(
+                    "IME: Using cached foreground window handle: {:p}",
+                    cached_hwnd
+                );
                 return Ok(cached_hwnd);
             }
             // Foreground window changed, will update cache below
@@ -224,19 +227,6 @@ impl ImeController for WindowsImeController {
             match Self::get_valid_foreground_window() {
                 Ok(hwnd) => Self::get_ime_window(hwnd).is_some(),
                 Err(_) => false,
-            }
-        }
-    }
-
-    /// Reset IME if needed (Windows-specific)
-    fn reset_if_needed() -> Result<()> {
-        // Windows IME generally doesn't need explicit reset
-        // But we can check if IME is responsive
-        match Self::is_ime_enabled() {
-            Ok(_) => Ok(()),
-            Err(e) => {
-                log::warn!("IME not responsive, may need user intervention: {}", e);
-                Err(e)
             }
         }
     }

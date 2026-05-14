@@ -3,7 +3,7 @@
 //! 运行: `cargo run --example ime_demo --features integration`
 
 #[cfg(any(test, feature = "integration"))]
-use helix_term::handlers::ime::platform::{self, ImeDetector, ImeType, ImeSettings};
+use helix_term::handlers::ime::platform::{self, ImeDetector, ImeSettings, ImeType};
 #[cfg(any(test, feature = "integration"))]
 use std::io::{self, Write};
 
@@ -68,8 +68,10 @@ fn main() -> anyhow::Result<()> {
     for ime_name in test_cases {
         let detected = ImeDetector::detect_ime_type(ime_name);
         let settings = ImeDetector::get_optimal_settings(detected);
-        println!("   {}: {:?} (重试 {} 次)",
-            ime_name, detected, settings.retry_count);
+        println!(
+            "   {}: {:?} (重试 {} 次)",
+            ime_name, detected, settings.retry_count
+        );
     }
 
     // 6. 初始化平台支持
@@ -107,13 +109,6 @@ fn main() -> anyhow::Result<()> {
             Err(e) => {
                 println!("   ✗ 无法获取状态: {}", e);
             }
-        }
-
-        // 测试重置
-        println!("\n8. IME 重置:");
-        match platform::reset_if_needed() {
-            Ok(()) => println!("   ✓ 重置完成"),
-            Err(e) => println!("   ✗ 重置失败: {}", e),
         }
     } else {
         println!("   当前平台不支持 IME 或未安装 IME");

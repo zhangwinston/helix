@@ -1,6 +1,6 @@
 //! macOS IME control implementation using TIS (Text Input Source) API.
 
-use super::{ImeController, ImeInfo, ImeCapabilities, ImeDetector, ImeType};
+use super::{ImeCapabilities, ImeController, ImeDetector, ImeInfo, ImeType};
 use anyhow::{Context, Result};
 use std::process::Command;
 
@@ -20,7 +20,12 @@ impl MacosImeController {
         } else {
             // Fallback: try defaults read
             let output = Command::new("defaults")
-                .args(&["read", "-g", "com.apple.HIToolbox", "AppleCurrentInputMethod"])
+                .args(&[
+                    "read",
+                    "-g",
+                    "com.apple.HIToolbox",
+                    "AppleCurrentInputMethod",
+                ])
                 .output()
                 .context("Failed to read input method defaults")?;
 
@@ -44,14 +49,14 @@ impl MacosImeController {
 
     /// Check if an input source is an IME
     fn is_ime_input_source(source: &str) -> bool {
-        source.to_lowercase().contains("pinyin") ||
-        source.to_lowercase().contains("sogou") ||
-        source.to_lowercase().contains("google") ||
-        source.to_lowercase().contains("baidu") ||
-        source.to_lowercase().contains("chinese") ||
-        source.to_lowercase().contains("kotoeri") ||
-        source.to_lowercase().contains("mazer") ||
-        source.to_lowercase().contains("tenkey")
+        source.to_lowercase().contains("pinyin")
+            || source.to_lowercase().contains("sogou")
+            || source.to_lowercase().contains("google")
+            || source.to_lowercase().contains("baidu")
+            || source.to_lowercase().contains("chinese")
+            || source.to_lowercase().contains("kotoeri")
+            || source.to_lowercase().contains("mazer")
+            || source.to_lowercase().contains("tenkey")
     }
 
     /// Switch input using imselect or defaults
@@ -68,16 +73,24 @@ impl MacosImeController {
 
         // Fallback to defaults
         let output = Command::new("defaults")
-            .args(&["write", "-g", "com.apple.HIToolbox",
-                   "AppleCurrentInputMethod", "-string", source])
+            .args(&[
+                "write",
+                "-g",
+                "com.apple.HIToolbox",
+                "AppleCurrentInputMethod",
+                "-string",
+                source,
+            ])
             .output()
             .context("Failed to switch input method")?;
 
         if output.status.success() {
             Ok(())
         } else {
-            Err(anyhow::anyhow!("Failed to switch to input source: {}",
-                String::from_utf8_lossy(&output.stderr)))
+            Err(anyhow::anyhow!(
+                "Failed to switch to input source: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ))
         }
     }
 }
@@ -156,12 +169,6 @@ impl ImeController for MacosImeController {
     fn is_ime_available() -> bool {
         // On macOS, IME is always available (built-in)
         true
-    }
-
-    fn reset_if_needed() -> Result<()> {
-        // Check if we can query the input source
-        Self::get_current_input_source()?;
-        Ok(())
     }
 
     fn initialize() -> Result<()> {

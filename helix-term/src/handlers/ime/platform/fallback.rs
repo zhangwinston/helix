@@ -1,6 +1,6 @@
 //! Fallback IME controller for unsupported platforms.
 
-use super::{ImeController, ImeInfo, ImeCapabilities};
+use super::{ImeCapabilities, ImeController, ImeInfo};
 
 /// Fallback IME controller for platforms without specific implementation.
 ///
@@ -31,11 +31,6 @@ impl ImeController for FallbackImeController {
 
     fn is_ime_available() -> bool {
         false
-    }
-
-    fn reset_if_needed() -> super::Result<()> {
-        // No-op
-        Ok(())
     }
 
     fn initialize() -> super::Result<()> {

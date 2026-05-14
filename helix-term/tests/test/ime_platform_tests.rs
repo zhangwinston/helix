@@ -128,12 +128,6 @@ async fn test_ime_state_operations() -> anyhow::Result<()> {
         }
     }
 
-    // Test reset
-    match platform::reset_if_needed() {
-        Ok(()) => println!("IME reset completed"),
-        Err(e) => println!("IME reset failed: {}", e),
-    }
-
     Ok(())
 }
 

@@ -1107,7 +1107,7 @@ impl EditorView {
                 }
 
                 let res = self.handle_keymap_event(mode, cxt, event);
-                
+
                 if matches!(&res, Some(KeymapResult::NotFound)) {
                     self.on_next_key(OnKeyCallbackKind::Fallback, cxt, event);
                 }
