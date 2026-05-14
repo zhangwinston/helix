@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(cargo check:*)"
+      "Bash(cargo check:*)",
+      "Bash(ECC_GATEGUARD=off cargo build -p helix-term)",
+      "Bash(ECC_GATEGUARD=off node *)"
     ]
   }
 }

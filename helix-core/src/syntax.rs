@@ -1493,6 +1493,19 @@ fn language_has_string_or_comment_types(loader: &Loader, language: Language) -> 
 /// - Detects comment and string regions by checking node types (simplified approach)
 /// - Excludes leading quote symbols (FR-004) and comment header symbols (FR-005)
 /// - Includes trailing quote first character (FR-006) and comment tail first character (FR-007)
+#[inline]
+fn contains_ignore_ascii_case(haystack: &str, needle: &[u8]) -> bool {
+    let h = haystack.as_bytes();
+    if needle.is_empty() {
+        return true;
+    }
+    let n = needle.len();
+    if n > h.len() {
+        return false;
+    }
+    h.windows(n).any(|w| w.eq_ignore_ascii_case(needle))
+}
+
 pub fn detect_ime_sensitive_region(
     syntax: Option<&Syntax>,
     source: RopeSlice, // Used for full file fallback caching
@@ -1559,10 +1572,9 @@ pub fn detect_ime_sensitive_region(
 
         // Check if node type contains "comment" (case-insensitive check for robustness)
         // Also explicitly check for comment_content which might be a child node type
-        let node_kind_lower = node_kind.to_lowercase();
-        let is_comment_node = node_kind_lower.contains("comment")
-            || node_kind == "comment_content";
-        
+        let is_comment_node =
+            contains_ignore_ascii_case(node_kind, b"comment") || node_kind == "comment_content";
+
         if is_comment_node {
             if cursor_pos >= node_start && cursor_pos < node_end {
                 // For comment_content nodes, they don't include the comment marker, so always treat as content
@@ -1608,7 +1620,7 @@ pub fn detect_ime_sensitive_region(
             && !node_kind.contains("string_start")
             && !node_kind.contains("string_end"))
             || node_kind == "string_content";
-        
+
         if is_string_node {
             if cursor_pos >= node_start && cursor_pos < node_end {
                 // For string_content nodes, they don't include quotes, so always treat as content

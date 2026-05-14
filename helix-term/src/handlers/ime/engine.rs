@@ -369,4 +369,30 @@ mod tests {
         assert_eq!(ctx.current_region, Some(ImeSensitiveRegion::StringContent));
         assert_eq!(ctx.saved_state, Some(true));
     }
+
+    #[test]
+    fn entire_file_is_sensitive() {
+        // EntireFile should be considered a sensitive region
+        assert!(is_sensitive(ImeSensitiveRegion::EntireFile));
+        assert!(is_sensitive(ImeSensitiveRegion::StringContent));
+        assert!(is_sensitive(ImeSensitiveRegion::CommentContent));
+        assert!(!is_sensitive(ImeSensitiveRegion::Code));
+    }
+
+    #[test]
+    fn entire_file_region_change_does_not_disable_ime() {
+        // When current_region is EntireFile, `handle_cursor_move` skips processing;
+        // the engine should still treat an unchanged region as a no-op.
+        let mut ctx = ImeContext::new(Mode::Insert);
+        ctx.current_region = Some(ImeSensitiveRegion::EntireFile);
+        ctx.saved_state = Some(true);
+
+        // Simulate "moving" within EntireFile (region unchanged)
+        let mut engine = ImeEngine::new(&mut ctx);
+        let action = engine.on_region_change(ImeSensitiveRegion::EntireFile, true);
+
+        // Region unchanged, no action needed
+        assert_eq!(action, None);
+        assert_eq!(ctx.current_region, Some(ImeSensitiveRegion::EntireFile));
+    }
 }
