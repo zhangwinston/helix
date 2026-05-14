@@ -1,5 +1,5 @@
 use arc_swap::{access::Map, ArcSwap};
-use futures_util::Stream;
+use futures_util::{future::poll_fn, Stream};
 use helix_core::{diagnostic::Severity, pos_at_coords, syntax, Range, Selection};
 use helix_lsp::{
     lsp::{self, notification::Notification},
@@ -32,9 +32,13 @@ use crate::{
 
 use log::{debug, error, info, warn};
 use std::{
+    collections::{HashSet, VecDeque},
     io::{stdin, IsTerminal},
     path::Path,
+    pin::Pin,
     sync::Arc,
+    task::Poll,
+    time::{Duration, Instant},
 };
 
 #[cfg_attr(windows, allow(unused_imports))]
@@ -68,6 +72,67 @@ type TerminalEvent = crossterm::event::Event;
 
 type Terminal = tui::terminal::Terminal<TerminalBackend>;
 
+async fn poll_stream_immediately<S>(stream: &mut S) -> Option<S::Item>
+where
+    S: Stream + Unpin,
+{
+    poll_fn(|cx| match Pin::new(&mut *stream).poll_next(cx) {
+        Poll::Ready(item) => Poll::Ready(item),
+        Poll::Pending => Poll::Ready(None),
+    })
+    .await
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum InterruptibleScrollCommand {
+    MoveLineUp,
+    MoveLineDown,
+    MoveVisualLineUp,
+    MoveVisualLineDown,
+    PageUp,
+    PageDown,
+    HalfPageUp,
+    HalfPageDown,
+    PageCursorUp,
+    PageCursorDown,
+    PageCursorHalfUp,
+    PageCursorHalfDown,
+    ScrollUp,
+    ScrollDown,
+}
+
+impl InterruptibleScrollCommand {
+    fn from_command_name(name: &str) -> Option<Self> {
+        Some(match name {
+            "move_line_up" => Self::MoveLineUp,
+            "move_line_down" => Self::MoveLineDown,
+            "move_visual_line_up" => Self::MoveVisualLineUp,
+            "move_visual_line_down" => Self::MoveVisualLineDown,
+            "page_up" => Self::PageUp,
+            "page_down" => Self::PageDown,
+            "half_page_up" => Self::HalfPageUp,
+            "half_page_down" => Self::HalfPageDown,
+            "page_cursor_up" => Self::PageCursorUp,
+            "page_cursor_down" => Self::PageCursorDown,
+            "page_cursor_half_up" => Self::PageCursorHalfUp,
+            "page_cursor_half_down" => Self::PageCursorHalfDown,
+            "scroll_up" => Self::ScrollUp,
+            "scroll_down" => Self::ScrollDown,
+            _ => return None,
+        })
+    }
+}
+
+const RECENT_SCROLL_ESCAPE_WINDOW: Duration = Duration::from_millis(300);
+const INTERRUPTIBLE_SCROLL_SUPPRESSION_WINDOW: Duration = Duration::from_millis(180);
+const MAX_IMMEDIATE_TERMINAL_EVENT_CAPTURE: usize = 64;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TerminalKeyEventKind {
+    Press,
+    Release,
+}
+
 pub struct Application {
     compositor: Compositor,
     terminal: Terminal,
@@ -78,6 +143,11 @@ pub struct Application {
     signals: Signals,
     jobs: Jobs,
     lsp_progress: LspProgressMap,
+    pending_terminal_events: VecDeque<std::io::Result<TerminalEvent>>,
+    last_interruptible_scroll_at: Option<Instant>,
+    suppress_interruptible_scroll_until: Option<Instant>,
+    held_interruptible_scroll_keys: HashSet<helix_view::input::KeyEvent>,
+    suppressed_interruptible_scroll_keys: HashSet<helix_view::input::KeyEvent>,
 
     theme_mode: Option<theme::Mode>,
 }
@@ -267,6 +337,11 @@ impl Application {
             signals,
             jobs,
             lsp_progress: LspProgressMap::new(),
+            pending_terminal_events: VecDeque::new(),
+            last_interruptible_scroll_at: None,
+            suppress_interruptible_scroll_until: None,
+            held_interruptible_scroll_keys: HashSet::new(),
+            suppressed_interruptible_scroll_keys: HashSet::new(),
             theme_mode,
         };
 
@@ -306,6 +381,289 @@ impl Application {
         self.terminal.draw(pos, kind).unwrap();
     }
 
+    #[cfg(not(windows))]
+    fn terminal_key_event(event: &TerminalEvent) -> Option<helix_view::input::KeyEvent> {
+        match event {
+            termina::Event::Key(key) => Some((*key).into()),
+            _ => None,
+        }
+    }
+
+    #[cfg(windows)]
+    fn terminal_key_event(event: &TerminalEvent) -> Option<helix_view::input::KeyEvent> {
+        match event {
+            crossterm::event::Event::Key(key) => Some((*key).into()),
+            _ => None,
+        }
+    }
+
+    #[cfg(not(windows))]
+    fn terminal_key_event_parts(
+        event: &TerminalEvent,
+    ) -> Option<(helix_view::input::KeyEvent, TerminalKeyEventKind)> {
+        match event {
+            termina::Event::Key(key) => Some((
+                (*key).into(),
+                match key.kind {
+                    termina::event::KeyEventKind::Release => TerminalKeyEventKind::Release,
+                    _ => TerminalKeyEventKind::Press,
+                },
+            )),
+            _ => None,
+        }
+    }
+
+    #[cfg(windows)]
+    fn terminal_key_event_parts(
+        event: &TerminalEvent,
+    ) -> Option<(helix_view::input::KeyEvent, TerminalKeyEventKind)> {
+        match event {
+            crossterm::event::Event::Key(key) => Some((
+                (*key).into(),
+                match key.kind {
+                    crossterm::event::KeyEventKind::Release => TerminalKeyEventKind::Release,
+                    _ => TerminalKeyEventKind::Press,
+                },
+            )),
+            _ => None,
+        }
+    }
+
+    fn interruptible_scroll_event(
+        &mut self,
+        event: &TerminalEvent,
+    ) -> Option<InterruptibleScrollCommand> {
+        let key = Self::terminal_key_event(event)?;
+        let mode = self.editor.mode();
+        let editor_view = self.compositor.find::<ui::EditorView>()?;
+        if !editor_view.keymaps.pending().is_empty() || editor_view.keymaps.sticky().is_some() {
+            return None;
+        }
+
+        match editor_view.keymaps.peek(mode, key) {
+            crate::keymap::KeymapResult::Matched(command) => {
+                InterruptibleScrollCommand::from_command_name(command.name())
+            }
+            _ => None,
+        }
+    }
+
+    fn is_escape_key_event(event: &TerminalEvent) -> bool {
+        Self::terminal_key_event(event).is_some_and(|key| key == crate::key!(Esc))
+    }
+
+    fn mark_interruptible_scroll(&mut self, now: Instant) {
+        self.last_interruptible_scroll_at = Some(now);
+    }
+
+    fn extend_interruptible_scroll_suppression(&mut self, now: Instant) {
+        self.suppress_interruptible_scroll_until =
+            Some(now + INTERRUPTIBLE_SCROLL_SUPPRESSION_WINDOW);
+    }
+
+    fn interruptible_scroll_suppression_active(&mut self, now: Instant) -> bool {
+        match self.suppress_interruptible_scroll_until {
+            Some(until) if now < until => true,
+            Some(_) => {
+                self.suppress_interruptible_scroll_until = None;
+                false
+            }
+            None => false,
+        }
+    }
+
+    fn clear_pending_interruptible_scroll_events(&mut self) {
+        let mut retained_events = VecDeque::with_capacity(self.pending_terminal_events.len());
+        while let Some(event) = self.pending_terminal_events.pop_front() {
+            let is_interruptible_scroll = event
+                .as_ref()
+                .ok()
+                .and_then(|event| self.interruptible_scroll_event(event))
+                .is_some();
+
+            if !is_interruptible_scroll {
+                retained_events.push_back(event);
+            }
+        }
+        self.pending_terminal_events = retained_events;
+    }
+
+    fn should_suppress_terminal_event(&mut self, event: &TerminalEvent) -> bool {
+        let now = Instant::now();
+        let key_parts = Self::terminal_key_event_parts(event);
+
+        if let Some(_command) = self.interruptible_scroll_event(event) {
+            if let Some((key, kind)) = key_parts {
+                match kind {
+                    TerminalKeyEventKind::Release => {
+                        self.held_interruptible_scroll_keys.remove(&key);
+                        self.suppressed_interruptible_scroll_keys.remove(&key);
+                        return false;
+                    }
+                    TerminalKeyEventKind::Press => {
+                        self.held_interruptible_scroll_keys.insert(key);
+                        if self.suppressed_interruptible_scroll_keys.contains(&key)
+                            || self.interruptible_scroll_suppression_active(now)
+                        {
+                            self.mark_interruptible_scroll(now);
+                            self.extend_interruptible_scroll_suppression(now);
+                            return true;
+                        }
+                    }
+                }
+            }
+
+            self.mark_interruptible_scroll(now);
+            return false;
+        }
+
+        if Self::is_escape_key_event(event)
+            && !matches!(key_parts, Some((_, TerminalKeyEventKind::Release)))
+        {
+            let recent_scroll = self
+                .last_interruptible_scroll_at
+                .is_some_and(|at| now.duration_since(at) <= RECENT_SCROLL_ESCAPE_WINDOW);
+            if recent_scroll || self.interruptible_scroll_suppression_active(now) {
+                self.clear_pending_interruptible_scroll_events();
+                self.suppressed_interruptible_scroll_keys
+                    .extend(self.held_interruptible_scroll_keys.iter().copied());
+                self.extend_interruptible_scroll_suppression(now);
+            }
+        }
+
+        false
+    }
+
+    fn handle_terminal_event(&mut self, event: std::io::Result<TerminalEvent>) -> bool {
+        #[cfg(not(windows))]
+        use termina::escape::csi;
+
+        if event
+            .as_ref()
+            .ok()
+            .is_some_and(|event| self.should_suppress_terminal_event(event))
+        {
+            return false;
+        }
+
+        let mut cx = crate::compositor::Context {
+            editor: &mut self.editor,
+            jobs: &mut self.jobs,
+            scroll: None,
+        };
+
+        match event.unwrap() {
+            #[cfg(not(windows))]
+            termina::Event::WindowResized(termina::WindowSize { rows, cols, .. }) => {
+                self.terminal
+                    .resize(Rect::new(0, 0, cols, rows))
+                    .expect("Unable to resize terminal");
+
+                let area = self.terminal.size();
+
+                self.compositor.resize(area);
+
+                self.compositor
+                    .handle_event(&Event::Resize(cols, rows), &mut cx)
+            }
+            #[cfg(not(windows))]
+            // Ignore keyboard release events.
+            termina::Event::Key(termina::event::KeyEvent {
+                kind: termina::event::KeyEventKind::Release,
+                ..
+            }) => false,
+            #[cfg(not(windows))]
+            termina::Event::Csi(csi::Csi::Mode(csi::Mode::ReportTheme(mode))) => {
+                self.theme_mode = Some(mode.into());
+                Self::load_configured_theme(
+                    &mut self.editor,
+                    &self.config.load(),
+                    &mut self.terminal,
+                    self.theme_mode,
+                );
+                true
+            }
+            #[cfg(windows)]
+            TerminalEvent::Resize(width, height) => {
+                self.terminal
+                    .resize(Rect::new(0, 0, width, height))
+                    .expect("Unable to resize terminal");
+
+                let area = self.terminal.size();
+
+                self.compositor.resize(area);
+
+                self.compositor
+                    .handle_event(&Event::Resize(width, height), &mut cx)
+            }
+            #[cfg(windows)]
+            // Ignore keyboard release events.
+            crossterm::event::Event::Key(crossterm::event::KeyEvent {
+                kind: crossterm::event::KeyEventKind::Release,
+                ..
+            }) => false,
+            #[cfg(not(windows))]
+            event if event.is_escape() => false,
+            event => self.compositor.handle_event(&event.into(), &mut cx),
+        }
+    }
+
+    async fn capture_immediate_terminal_events<S>(&mut self, input_stream: &mut S)
+    where
+        S: Stream<Item = std::io::Result<TerminalEvent>> + Unpin,
+    {
+        let mut priority_events = VecDeque::new();
+        let mut normal_events = VecDeque::new();
+        let mut cancel_scrolling = false;
+        let mut captured = 0;
+
+        while captured < MAX_IMMEDIATE_TERMINAL_EVENT_CAPTURE {
+            let Some(next_event) = poll_stream_immediately(input_stream).await else {
+                break;
+            };
+            captured += 1;
+
+            match next_event {
+                Ok(event) if Self::is_escape_key_event(&event) => {
+                    cancel_scrolling = true;
+                    self.clear_pending_interruptible_scroll_events();
+                    priority_events.push_back(Ok(event));
+                }
+                Ok(event) if self.interruptible_scroll_event(&event).is_some() => {
+                    if !cancel_scrolling {
+                        normal_events.push_back(Ok(event));
+                    }
+                }
+                other => normal_events.push_back(other),
+            }
+        }
+
+        while let Some(event) = priority_events.pop_back() {
+            self.pending_terminal_events.push_front(event);
+        }
+        while let Some(event) = normal_events.pop_front() {
+            self.pending_terminal_events.push_back(event);
+        }
+    }
+
+    async fn handle_terminal_event_batch<S>(
+        &mut self,
+        input_stream: &mut S,
+        first_event: std::io::Result<TerminalEvent>,
+    ) where
+        S: Stream<Item = std::io::Result<TerminalEvent>> + Unpin,
+    {
+        let should_redraw = self.handle_terminal_event(first_event);
+
+        if should_redraw {
+            self.capture_immediate_terminal_events(input_stream).await;
+        }
+
+        if should_redraw && !self.editor.should_close() {
+            self.render().await;
+        }
+    }
+
     pub async fn event_loop<S>(&mut self, input_stream: &mut S)
     where
         S: Stream<Item = std::io::Result<TerminalEvent>> + Unpin,
@@ -328,6 +686,11 @@ impl Application {
                 return false;
             }
 
+            if let Some(event) = self.pending_terminal_events.pop_front() {
+                self.handle_terminal_event_batch(input_stream, event).await;
+                continue;
+            }
+
             use futures_util::StreamExt;
 
             tokio::select! {
@@ -339,7 +702,7 @@ impl Application {
                     };
                 }
                 Some(event) = input_stream.next() => {
-                    self.handle_terminal_events(event).await;
+                    self.handle_terminal_event_batch(input_stream, event).await;
                 }
                 Some(callback) = self.jobs.callbacks.recv() => {
                     self.jobs.handle_callback(&mut self.editor, &mut self.compositor, Ok(Some(callback)));
@@ -1370,6 +1733,98 @@ impl Application {
         }
 
         errs
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::poll_stream_immediately;
+    use futures_util::{Stream, StreamExt};
+    use std::{
+        pin::Pin,
+        sync::{Arc, Mutex},
+        task::{Context, Poll, Waker},
+        time::Duration,
+    };
+
+    struct OneShotState<T> {
+        item: Option<T>,
+        waker: Option<Waker>,
+    }
+
+    impl<T> Default for OneShotState<T> {
+        fn default() -> Self {
+            Self {
+                item: None,
+                waker: None,
+            }
+        }
+    }
+
+    struct OneShotStream<T> {
+        state: Arc<Mutex<OneShotState<T>>>,
+    }
+
+    struct OneShotSender<T> {
+        state: Arc<Mutex<OneShotState<T>>>,
+    }
+
+    impl<T> OneShotStream<T> {
+        fn new() -> (Self, OneShotSender<T>) {
+            let state = Arc::new(Mutex::new(OneShotState::default()));
+            (
+                Self {
+                    state: Arc::clone(&state),
+                },
+                OneShotSender { state },
+            )
+        }
+    }
+
+    impl<T> OneShotSender<T> {
+        fn send(self, item: T) {
+            let waker = {
+                let mut state = self.state.lock().unwrap();
+                state.item = Some(item);
+                state.waker.take()
+            };
+
+            if let Some(waker) = waker {
+                waker.wake();
+            }
+        }
+    }
+
+    impl<T> Stream for OneShotStream<T> {
+        type Item = T;
+
+        fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+            let mut state = self.state.lock().unwrap();
+            if let Some(item) = state.item.take() {
+                Poll::Ready(Some(item))
+            } else {
+                state.waker = Some(cx.waker().clone());
+                Poll::Pending
+            }
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn immediate_poll_keeps_real_waker_registered() {
+        let (mut stream, sender) = OneShotStream::new();
+
+        assert_eq!(poll_stream_immediately(&mut stream).await, None);
+
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            sender.send(42);
+        });
+
+        let item = tokio::time::timeout(Duration::from_secs(1), stream.next())
+            .await
+            .expect("stream should still be wakeable after an immediate poll");
+
+        assert_eq!(item, Some(42));
     }
 }
 
