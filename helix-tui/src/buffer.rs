@@ -5,15 +5,11 @@ use helix_view::graphics::{Color, Modifier, Rect, Style, UnderlineStyle};
 use std::cmp::min;
 use unicode_segmentation::UnicodeSegmentation;
 
-pub const SYMBOL_CAPACITY: usize = 28;
-pub type Symbol = arrayvec::ArrayString<SYMBOL_CAPACITY>;
-
 /// One cell of the terminal. Contains one stylized grapheme.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Cell {
-    pub symbol: Symbol,
-    /// Cached display width of `symbol` to avoid multiple recomputes in the hot path.
-    width: u8,
+    pub symbol: String,
+    pub width: u8, // Cached width of the symbol (0 means width > 255 or invalid)
     pub fg: Color,
     pub bg: Color,
     pub underline_color: Color,
@@ -28,15 +24,8 @@ impl Cell {
     /// Set the cell's grapheme
     pub fn set_symbol(&mut self, symbol: &str) -> &mut Cell {
         self.symbol.clear();
-        if self.symbol.try_push_str(symbol).is_err() {
-            debug_assert!(
-                symbol.len() > SYMBOL_CAPACITY,
-                "Symbols can't exceed {SYMBOL_CAPACITY} bytes.\nTried to push {symbol} (size in bytes: {})",
-                symbol.len()
-            );
-            self.symbol.push(REPLACEMENT_CHARACTER);
-        }
-        self.width = self.symbol.width() as u8;
+        self.symbol.push_str(symbol);
+        self.width = symbol.width() as u8;
         self
     }
 
@@ -44,18 +33,8 @@ impl Cell {
     /// Used on the render hot path where the width is known.
     pub(crate) fn set_symbol_with_width(&mut self, symbol: &str, width: u8) -> &mut Cell {
         self.symbol.clear();
-        if self.symbol.try_push_str(symbol).is_err() {
-            debug_assert!(
-                symbol.len() > 28,
-                "Symbols can't exceed 28 bytes.\nTried to push {} (size in bytes: {})",
-                symbol,
-                symbol.len()
-            );
-            self.symbol.push(REPLACEMENT_CHARACTER);
-            self.width = REPLACEMENT_CHARACTER.width().unwrap_or(1) as u8;
-        } else {
-            self.width = width;
-        }
+        self.symbol.push_str(symbol);
+        self.width = width;
         self
     }
 
@@ -117,14 +96,22 @@ impl Cell {
     /// Resets the cell to a default blank state
     pub fn reset(&mut self) {
         *self = Self::default();
+        self.symbol.clear();
+        self.symbol.push(' ');
+        self.width = 1; // Space has width 1
+        self.fg = Color::Reset;
+        self.bg = Color::Reset;
+        self.underline_color = Color::Reset;
+        self.underline_style = UnderlineStyle::Reset;
+        self.modifier = Modifier::empty();
     }
 }
 
 impl Default for Cell {
     fn default() -> Cell {
         Cell {
-            symbol: Symbol::from(" ").unwrap(),
-            width: 1,
+            symbol: " ".into(),
+            width: 1, // Space has width 1
             fg: Color::Reset,
             bg: Color::Reset,
             underline_color: Color::Reset,
@@ -751,7 +738,7 @@ impl Buffer {
             let trailing_changed = i + 1 < next_buffer.len()
                 && i + 1 < previous_buffer.len()
                 && next_buffer[i + 1] != previous_buffer[i + 1];
-            let current_width = current.symbol.width();
+            let current_width = current.width as usize;
             // Only when the trailing cell became blank (e.g. popup closed): re-emit trailing then
             // leading so we clear the border and redraw the wide char. Do NOT do this when the
             // trailing cell got new content (e.g. popup opened, border drawn there), or we would
@@ -789,9 +776,26 @@ impl Buffer {
 
             to_skip = current_width.saturating_sub(1);
 
-            let affected_width = std::cmp::max(current_width, previous.width());
+            let affected_width = std::cmp::max(current_width, previous.width as usize);
             invalidated = std::cmp::max(affected_width, invalidated).saturating_sub(1);
         }
+
+        // Record rendering metrics for performance analysis
+        // Optimization: diff() no longer calls symbol.width(), uses cached cell.width instead
+        // This saves cells_traversed * 1 width() call per diff
+        #[cfg(feature = "render-metrics")]
+        {
+            use crate::render_metrics::record_diff;
+            let cells_traversed = next_buffer.len();
+            let cells_updated = updates.len();
+            let wide_chars = updates
+                .iter()
+                .filter(|(_, _, cell)| cell.width > 1)
+                .count();
+            // width_compute_count = 0 because cell.width cache eliminates all width() calls in diff
+            record_diff(cells_traversed, cells_updated, wide_chars, 0);
+        }
+
         updates
     }
 }

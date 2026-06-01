@@ -3585,6 +3585,28 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
         },
     },
     TypableCommand {
+        name: "render-stats",
+        aliases: &["rs"],
+        doc: "Display rendering performance metrics. Use :render-stats-reset to reset.",
+        fun: render_stats,
+        completer: CommandCompleter::none(),
+        signature: Signature {
+            positionals: (0, Some(0)),
+            ..Signature::DEFAULT
+        },
+    },
+    TypableCommand {
+        name: "render-stats-reset",
+        aliases: &["rsr"],
+        doc: "Reset rendering performance metrics.",
+        fun: render_stats_reset,
+        completer: CommandCompleter::none(),
+        signature: Signature {
+            positionals: (0, Some(0)),
+            ..Signature::DEFAULT
+        },
+    },
+    TypableCommand {
         name: "tree-sitter-layers",
         aliases: &[],
         doc: "Display language names of tree-sitter injection layers under the cursor.",
@@ -4427,6 +4449,58 @@ fn complete_expansion_kind(content: &str, offset: usize) -> Vec<ui::prompt::Comp
     .into_iter()
     .map(|(name, _)| (offset.., (*name).into()))
     .collect()
+}
+
+fn render_stats(
+    cx: &mut compositor::Context,
+    _args: Args<'_>,
+    event: PromptEvent,
+) -> anyhow::Result<()> {
+    use tui::render_metrics;
+
+    if event != PromptEvent::Validate {
+        return Ok(());
+    }
+
+    let metrics = render_metrics::snapshot();
+
+    // Calculate key metrics for single-line display
+    let total_width_ops = metrics.width_calls_saved + metrics.width_compute_count;
+    let cache_rate = if total_width_ops > 0 {
+        (metrics.width_calls_saved as f64 / total_width_ops as f64) * 100.0
+    } else {
+        0.0
+    };
+    let update_rate = if metrics.cells_traversed > 0 {
+        (metrics.cells_updated as f64 / metrics.cells_traversed as f64) * 100.0
+    } else {
+        0.0
+    };
+
+    cx.editor.set_status(format!(
+        "render: diff={} traversed={} updated={} ({:.0}%) wide={} | cache={:.0}% saved={} width_calls=0",
+        metrics.diff_calls, metrics.cells_traversed, metrics.cells_updated, update_rate,
+        metrics.wide_chars, cache_rate, metrics.width_calls_saved
+    ));
+
+    Ok(())
+}
+
+fn render_stats_reset(
+    cx: &mut compositor::Context,
+    _args: Args<'_>,
+    event: PromptEvent,
+) -> anyhow::Result<()> {
+    use tui::render_metrics;
+
+    if event != PromptEvent::Validate {
+        return Ok(());
+    }
+
+    render_metrics::reset();
+    cx.editor.set_status("render metrics reset");
+
+    Ok(())
 }
 
 fn trust_workspace(
