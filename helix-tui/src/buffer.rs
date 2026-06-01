@@ -10,6 +10,7 @@ use helix_view::graphics::{Color, Modifier, Rect, Style, UnderlineStyle};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Cell {
     pub symbol: String,
+    pub width: u8, // Cached width of the symbol (0 means width > 255 or invalid)
     pub fg: Color,
     pub bg: Color,
     pub underline_color: Color,
@@ -22,6 +23,7 @@ impl Cell {
     pub fn set_symbol(&mut self, symbol: &str) -> &mut Cell {
         self.symbol.clear();
         self.symbol.push_str(symbol);
+        self.width = symbol.width() as u8;
         self
     }
 
@@ -78,6 +80,7 @@ impl Cell {
     pub fn reset(&mut self) {
         self.symbol.clear();
         self.symbol.push(' ');
+        self.width = 1; // Space has width 1
         self.fg = Color::Reset;
         self.bg = Color::Reset;
         self.underline_color = Color::Reset;
@@ -90,6 +93,7 @@ impl Default for Cell {
     fn default() -> Cell {
         Cell {
             symbol: " ".into(),
+            width: 1, // Space has width 1
             fg: Color::Reset,
             bg: Color::Reset,
             underline_color: Color::Reset,
@@ -118,6 +122,7 @@ impl Default for Cell {
 /// buf.set_string(3, 0, "string", Style::default().fg(Color::Red).bg(Color::White));
 /// assert_eq!(buf[(5, 0)], Cell{
 ///     symbol: String::from("r"),
+///     width: 1, // "r" has width 1
 ///     fg: Color::Red,
 ///     bg: Color::White,
 ///     underline_color: Color::Reset,
@@ -717,7 +722,7 @@ impl Buffer {
             let trailing_changed = i + 1 < next_buffer.len()
                 && i + 1 < previous_buffer.len()
                 && next_buffer[i + 1] != previous_buffer[i + 1];
-            let current_width = current.symbol.width();
+            let current_width = current.width as usize;
             // Only when the trailing cell became blank (e.g. popup closed): re-emit trailing then
             // leading so we clear the border and redraw the wide char. Do NOT do this when the
             // trailing cell got new content (e.g. popup opened, border drawn there), or we would
@@ -755,9 +760,26 @@ impl Buffer {
 
             to_skip = current_width.saturating_sub(1);
 
-            let affected_width = std::cmp::max(current_width, previous.symbol.width());
+            let affected_width = std::cmp::max(current_width, previous.width as usize);
             invalidated = std::cmp::max(affected_width, invalidated).saturating_sub(1);
         }
+
+        // Record rendering metrics for performance analysis
+        // Optimization: diff() no longer calls symbol.width(), uses cached cell.width instead
+        // This saves cells_traversed * 1 width() call per diff
+        #[cfg(feature = "render-metrics")]
+        {
+            use crate::render_metrics::record_diff;
+            let cells_traversed = next_buffer.len();
+            let cells_updated = updates.len();
+            let wide_chars = updates
+                .iter()
+                .filter(|(_, _, cell)| cell.width > 1)
+                .count();
+            // width_compute_count = 0 because cell.width cache eliminates all width() calls in diff
+            record_diff(cells_traversed, cells_updated, wide_chars, 0);
+        }
+
         updates
     }
 }

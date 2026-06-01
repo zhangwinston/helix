@@ -95,6 +95,9 @@ impl FormattedGrapheme<'_> {
 struct GraphemeWithSource<'a> {
     grapheme: Grapheme<'a>,
     source: GraphemeSource,
+    /// Cached width for non-Tab graphemes.
+    /// Tab uses grapheme.width() directly since change_position() modifies it.
+    width_cache: usize,
 }
 
 impl<'a> GraphemeWithSource<'a> {
@@ -104,15 +107,21 @@ impl<'a> GraphemeWithSource<'a> {
         tab_width: u16,
         source: GraphemeSource,
     ) -> GraphemeWithSource<'a> {
+        let grapheme = Grapheme::new(g, visual_x, tab_width);
+        // Calculate width once and cache it (except Tab which uses grapheme.width directly)
+        let width_cache = grapheme.width();
         GraphemeWithSource {
-            grapheme: Grapheme::new(g, visual_x, tab_width),
+            grapheme,
             source,
+            width_cache,
         }
     }
     fn placeholder() -> Self {
+        let grapheme = Grapheme::Other { g: " ".into() };
         GraphemeWithSource {
-            grapheme: Grapheme::Other { g: " ".into() },
+            grapheme,
             source: GraphemeSource::Document { codepoints: 0 },
+            width_cache: 1, // space has width 1
         }
     }
 
@@ -132,8 +141,14 @@ impl<'a> GraphemeWithSource<'a> {
         self.source.is_eof()
     }
 
+    /// Returns the width of this grapheme.
+    /// For Tab, returns grapheme.width() directly since change_position() modifies it.
+    /// For other graphemes, returns the cached width.
     fn width(&self) -> usize {
-        self.grapheme.width()
+        match &self.grapheme {
+            Grapheme::Tab { .. } => self.grapheme.width(),
+            _ => self.width_cache,
+        }
     }
 
     fn is_word_boundary(&self) -> bool {
@@ -282,6 +297,7 @@ impl<'t> DocumentFormatter<'t> {
                 return Some(GraphemeWithSource {
                     grapheme: Grapheme::Other { g: " ".into() },
                     source: GraphemeSource::Document { codepoints: 0 },
+                    width_cache: 1, // space has width 1
                 });
             };
 

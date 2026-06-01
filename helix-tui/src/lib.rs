@@ -1,6 +1,7 @@
 pub mod backend;
 pub mod buffer;
 pub mod layout;
+pub mod render_metrics;
 pub mod symbols;
 pub mod terminal;
 pub mod text;
