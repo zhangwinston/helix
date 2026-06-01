@@ -810,6 +810,23 @@ impl Buffer {
             let affected_width = std::cmp::max(current_width, previous.width());
             invalidated = std::cmp::max(affected_width, invalidated).saturating_sub(1);
         }
+
+        // Record rendering metrics for performance analysis
+        // Optimization: diff() no longer calls symbol.width(), uses cached cell.width instead
+        // This saves cells_traversed * 1 width() call per diff
+        #[cfg(feature = "render-metrics")]
+        {
+            use crate::render_metrics::record_diff;
+            let cells_traversed = next_buffer.len();
+            let cells_updated = updates.len();
+            let wide_chars = updates
+                .iter()
+                .filter(|(_, _, cell)| cell.width > 1)
+                .count();
+            // width_compute_count = 0 because cell.width cache eliminates all width() calls in diff
+            record_diff(cells_traversed, cells_updated, wide_chars, 0);
+        }
+
         updates
     }
 }

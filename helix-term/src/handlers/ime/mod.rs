@@ -189,6 +189,12 @@ fn ime_cursor_snap(ctx: &ImeContext) -> ImeCursorSnap {
 /// is IME-sensitive but the region type never changes with the cursor, so there is
 /// nothing to do on [`SelectionDidChange`]. IME open/close and restore are handled
 /// on mode switch; entering Insert re-reads the system IME state for this case.
+///
+/// # Lock Consolidation
+/// Registry locks are consolidated where possible to reduce contention:
+/// - First two locks (get current_region for EntireFile check, then get snapshot) are merged
+/// - Third lock for cache miss remains separate (needs detection result)
+/// - Fourth lock for engine work remains separate (needs mutable context)
 pub fn handle_cursor_move(editor: &mut Editor, view_id: ViewId) -> Result<()> {
     metrics::record_cursor_move_call();
 
@@ -210,21 +216,6 @@ pub fn handle_cursor_move(editor: &mut Editor, view_id: ViewId) -> Result<()> {
     let editor_mode = editor.mode();
     let doc_id = editor.tree.get(view_id).doc;
 
-    // EntireFile: region does not depend on cursor — no auto-switch on cursor move.
-    // System IME is read when entering Insert (see `handle_mode_switch`).
-    let current_region =
-        registry::with_context_mut(doc_id, view_id, editor_mode, |ctx| ctx.current_region);
-    if current_region == Some(ImeSensitiveRegion::EntireFile) {
-        metrics::record_region_cache_hit();
-        metrics::record_cursor_move_duration(timer.elapsed());
-        log::trace!(
-            "IME: Skipping cursor-move handling for EntireFile region (doc={:?}, view={:?})",
-            doc_id,
-            view_id
-        );
-        return Ok(());
-    }
-
     let doc = match editor.documents.get_mut(&doc_id) {
         Some(doc) => doc,
         None => {
@@ -238,9 +229,16 @@ pub fn handle_cursor_move(editor: &mut Editor, view_id: ViewId) -> Result<()> {
     // Get primary cursor position (FR-020)
     let cursor_byte_pos = get_cursor_byte_pos(doc, view_id);
 
-    // Resolve region from cache and snapshot IME fields (single registry lock).
-    let (new_region_or, record_span_hit, ime_snap_opt) =
+    // ------------------------------------------------------------
+    // MERGED LOCK: Get EntireFile check + snapshot in single lock
+    // (was: first lock for current_region, second lock for snapshot)
+    // ------------------------------------------------------------
+    let (current_region, new_region_or, record_span_hit, ime_snap_opt) =
         registry::with_context_mut(doc_id, view_id, editor_mode, |ctx| {
+            // EntireFile check
+            let current_region = ctx.current_region;
+
+            // Compute snapshot data
             let cursor_changed = ctx.cached_cursor_byte_pos != Some(cursor_byte_pos);
             let region_unknown = ctx.current_region.is_none();
             let needs_detection = cursor_changed || region_unknown;
@@ -252,16 +250,29 @@ pub fn handle_cursor_move(editor: &mut Editor, view_id: ViewId) -> Result<()> {
                 let span_hit = span_region_at_cursor(ctx, doc_version, cursor_byte_pos).is_some();
                 let region = ctx.current_region.unwrap_or(ImeSensitiveRegion::Code);
                 let snap = ime_cursor_snap(ctx);
-                return (Some(region), span_hit, Some(snap));
+                return (current_region, Some(region), span_hit, Some(snap));
             }
 
             if let Some(r) = span_region_at_cursor(ctx, doc_version, cursor_byte_pos) {
                 let snap = ime_cursor_snap(ctx);
-                return (Some(r), true, Some(snap));
+                return (current_region, Some(r), true, Some(snap));
             }
 
-            (None, false, None)
+            (current_region, None, false, None)
         });
+
+    // EntireFile: region does not depend on cursor — no auto-switch on cursor move.
+    // System IME is read when entering Insert (see `handle_mode_switch`).
+    if current_region == Some(ImeSensitiveRegion::EntireFile) {
+        metrics::record_region_cache_hit();
+        metrics::record_cursor_move_duration(timer.elapsed());
+        log::trace!(
+            "IME: Skipping cursor-move handling for EntireFile region (doc={:?}, view={:?})",
+            doc_id,
+            view_id
+        );
+        return Ok(());
+    }
 
     let (new_region, (cached_ime_state, current_region, is_sensitive_region)) =
         match (new_region_or, ime_snap_opt) {
