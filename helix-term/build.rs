@@ -42,20 +42,11 @@ mod windows_rc {
                 .expect("CARGO_MANIFEST_DIR should have been set by Cargo")
         ));
 
-        let status = command
+        let _status = command
             .arg(format!("/fo{}", output.display()))
             .arg(format!("{}", input.display()))
             .output()
             .unwrap();
-
-        println!(
-            "RC Output:\n{}\n------",
-            String::from_utf8_lossy(&status.stdout)
-        );
-        println!(
-            "RC Error:\n{}\n------",
-            String::from_utf8_lossy(&status.stderr)
-        );
     }
 
     fn find_rc_exe() -> io::Result<PathBuf> {
@@ -100,7 +91,6 @@ mod windows_rc {
                             };
 
                             if rc.exists() {
-                                println!("{:?}", rc);
                                 rc_exe_paths.push(rc.to_owned());
                             }
 
@@ -112,7 +102,6 @@ mod windows_rc {
                                         e.path().join(r"x86\rc.exe")
                                     };
                                     if p.exists() {
-                                        println!("{:?}", p);
                                         rc_exe_paths.push(p.to_owned());
                                     }
                                 }
@@ -126,7 +115,6 @@ mod windows_rc {
                         ));
                     }
 
-                    println!("{:?}", rc_exe_paths);
                     let rc_path = rc_exe_paths.pop().unwrap();
 
                     let rc_exe = if !rc_path.exists() {
@@ -139,7 +127,6 @@ mod windows_rc {
                         rc_path
                     };
 
-                    println!("Selected RC path: '{}'", rc_exe.display());
                     Ok(rc_exe)
                 }
             }

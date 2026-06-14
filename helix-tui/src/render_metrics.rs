@@ -53,8 +53,10 @@ impl RenderMetricsInner {
         width_compute_count: usize,
     ) {
         self.diff_calls.fetch_add(1, Ordering::Relaxed);
-        self.cells_traversed.fetch_add(cells_traversed as u64, Ordering::Relaxed);
-        self.cells_updated.fetch_add(cells_updated as u64, Ordering::Relaxed);
+        self.cells_traversed
+            .fetch_add(cells_traversed as u64, Ordering::Relaxed);
+        self.cells_updated
+            .fetch_add(cells_updated as u64, Ordering::Relaxed);
         self.wide_chars
             .fetch_add(wide_chars as u64, Ordering::Relaxed);
         // Each traversed cell saves one width() call
@@ -160,5 +162,7 @@ pub fn reset() {
     RENDER_METRICS.cells_updated.store(0, Ordering::Relaxed);
     RENDER_METRICS.wide_chars.store(0, Ordering::Relaxed);
     RENDER_METRICS.width_calls_saved.store(0, Ordering::Relaxed);
-    RENDER_METRICS.width_compute_count.store(0, Ordering::Relaxed);
+    RENDER_METRICS
+        .width_compute_count
+        .store(0, Ordering::Relaxed);
 }

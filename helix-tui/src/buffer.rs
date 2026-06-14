@@ -17,9 +17,6 @@ pub struct Cell {
     pub modifier: Modifier,
 }
 
-/// Char when attempting to set symbol that exceeds capacity: �
-const REPLACEMENT_CHARACTER: char = '\u{FFFD}';
-
 impl Cell {
     /// Set the cell's grapheme
     pub fn set_symbol(&mut self, symbol: &str) -> &mut Cell {
@@ -788,10 +785,7 @@ impl Buffer {
             use crate::render_metrics::record_diff;
             let cells_traversed = next_buffer.len();
             let cells_updated = updates.len();
-            let wide_chars = updates
-                .iter()
-                .filter(|(_, _, cell)| cell.width > 1)
-                .count();
+            let wide_chars = updates.iter().filter(|(_, _, cell)| cell.width > 1).count();
             // width_compute_count = 0 because cell.width cache eliminates all width() calls in diff
             record_diff(cells_traversed, cells_updated, wide_chars, 0);
         }

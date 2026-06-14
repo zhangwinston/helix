@@ -1,5 +1,5 @@
 use arc_swap::{access::Map, ArcSwap};
-use futures_util::Stream;
+use futures_util::{future::poll_fn, Stream};
 use helix_core::{diagnostic::Severity, pos_at_coords, syntax, Range, Selection};
 use helix_lsp::{
     lsp::{self, notification::Notification},
@@ -21,6 +21,7 @@ use tui::backend::Backend;
 
 use crate::{
     args::Args,
+    commands::MappableCommand,
     compositor::{Compositor, Event},
     config::Config,
     handlers,
@@ -32,9 +33,14 @@ use crate::{
 
 use log::{debug, error, info, warn};
 use std::{
+    collections::VecDeque,
     io::{stdin, IsTerminal},
+    num::NonZero,
     path::Path,
+    pin::Pin,
     sync::Arc,
+    task::Poll,
+    time::{Duration, Instant},
 };
 
 #[cfg_attr(windows, allow(unused_imports))]
@@ -68,6 +74,113 @@ type TerminalEvent = crossterm::event::Event;
 
 type Terminal = tui::terminal::Terminal<TerminalBackend>;
 
+async fn poll_stream_immediately<S>(stream: &mut S) -> Option<S::Item>
+where
+    S: Stream + Unpin,
+{
+    poll_fn(|cx| match Pin::new(&mut *stream).poll_next(cx) {
+        Poll::Ready(item) => Poll::Ready(item),
+        Poll::Pending => Poll::Ready(None),
+    })
+    .await
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum InterruptibleScrollCommand {
+    MoveLineUp,
+    MoveLineDown,
+    MoveVisualLineUp,
+    MoveVisualLineDown,
+    PageUp,
+    PageDown,
+    HalfPageUp,
+    HalfPageDown,
+    PageCursorUp,
+    PageCursorDown,
+    PageCursorHalfUp,
+    PageCursorHalfDown,
+    ScrollUp,
+    ScrollDown,
+}
+
+impl InterruptibleScrollCommand {
+    fn from_command_name(name: &str) -> Option<Self> {
+        Some(match name {
+            "move_line_up" => Self::MoveLineUp,
+            "move_line_down" => Self::MoveLineDown,
+            "move_visual_line_up" => Self::MoveVisualLineUp,
+            "move_visual_line_down" => Self::MoveVisualLineDown,
+            "page_up" => Self::PageUp,
+            "page_down" => Self::PageDown,
+            "half_page_up" => Self::HalfPageUp,
+            "half_page_down" => Self::HalfPageDown,
+            "page_cursor_up" => Self::PageCursorUp,
+            "page_cursor_down" => Self::PageCursorDown,
+            "page_cursor_half_up" => Self::PageCursorHalfUp,
+            "page_cursor_half_down" => Self::PageCursorHalfDown,
+            "scroll_up" => Self::ScrollUp,
+            "scroll_down" => Self::ScrollDown,
+            _ => return None,
+        })
+    }
+
+    fn mappable(self) -> &'static MappableCommand {
+        match self {
+            Self::MoveLineUp => &MappableCommand::move_line_up,
+            Self::MoveLineDown => &MappableCommand::move_line_down,
+            Self::MoveVisualLineUp => &MappableCommand::move_visual_line_up,
+            Self::MoveVisualLineDown => &MappableCommand::move_visual_line_down,
+            Self::PageUp => &MappableCommand::page_up,
+            Self::PageDown => &MappableCommand::page_down,
+            Self::HalfPageUp => &MappableCommand::half_page_up,
+            Self::HalfPageDown => &MappableCommand::half_page_down,
+            Self::PageCursorUp => &MappableCommand::page_cursor_up,
+            Self::PageCursorDown => &MappableCommand::page_cursor_down,
+            Self::PageCursorHalfUp => &MappableCommand::page_cursor_half_up,
+            Self::PageCursorHalfDown => &MappableCommand::page_cursor_half_down,
+            Self::ScrollUp => &MappableCommand::scroll_up,
+            Self::ScrollDown => &MappableCommand::scroll_down,
+        }
+    }
+
+    /// Commands that accept a numeric prefix and scroll that many lines in one call.
+    /// All scroll commands use the loop path for correct boundary handling.
+    fn uses_count(self) -> bool {
+        false
+    }
+}
+
+const MAX_IMMEDIATE_TERMINAL_EVENT_CAPTURE: usize = 64;
+/// Maximum page-style scroll commands to apply in one batch.
+const MAX_BATCH_PAGE_REPEATS: usize = 64;
+/// Lines/visual-steps to apply in a single batched scroll command.
+const MAX_BATCH_SCROLL_STEPS: usize = 1024;
+/// Flush a pending scroll batch after input has been idle for this period.
+const SCROLL_BATCH_IDLE_FLUSH: Duration = Duration::from_millis(50);
+/// Minimum interval between scroll renders during a burst. This provides responsive
+/// first-scroll while still batching rapid subsequent scrolls for VDI performance.
+const SCROLL_BATCH_MIN_RENDER_INTERVAL: Duration = Duration::from_millis(16); // ~60fps
+
+/// State for batching multiple scroll events into a single scroll command.
+/// This significantly improves performance in VDI environments where rapid
+/// key presses can overwhelm the terminal I/O and cause slow scrolling.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct BatchScrollState {
+    /// The scroll command type being accumulated
+    command: InterruptibleScrollCommand,
+    /// Number of scroll events to batch together
+    count: usize,
+    /// Whether this batch has been rendered at least once.
+    /// If false, the event loop should render immediately to show UI response.
+    rendered: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TerminalKeyEventKind {
+    Press,
+    Release,
+}
+
 pub struct Application {
     compositor: Compositor,
     terminal: Terminal,
@@ -78,6 +191,16 @@ pub struct Application {
     signals: Signals,
     jobs: Jobs,
     lsp_progress: LspProgressMap,
+    pending_terminal_events: VecDeque<std::io::Result<TerminalEvent>>,
+    /// Batch scroll state: accumulates multiple scroll events of the same type
+    /// into a single scroll command for improved performance.
+    batch_scroll_state: Option<BatchScrollState>,
+    /// Deadline to flush a pending scroll batch without a key-release event.
+    batch_scroll_flush_deadline: Option<Instant>,
+    /// Timestamp of the last scroll batch render. Used to implement progressive
+    /// rendering: first scroll in a burst renders immediately; subsequent
+    /// scrolls wait for SCROLL_BATCH_IDLE_FLUSH before rendering again.
+    last_scroll_render_at: Option<Instant>,
 
     theme_mode: Option<theme::Mode>,
 }
@@ -88,7 +211,20 @@ fn setup_integration_logging() {
         .map(|lvl| lvl.parse().unwrap())
         .unwrap_or(log::LevelFilter::Info);
 
-    crate::logging::init_stdout(level);
+    // Separate file config so we can include year, month and day in file logs
+    let _ = fern::Dispatch::new()
+        .format(|out, message, record| {
+            out.finish(format_args!(
+                "{} {} [{}] {}",
+                chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f"),
+                record.target(),
+                record.level(),
+                message
+            ))
+        })
+        .level(level)
+        .chain(std::io::stdout())
+        .apply();
 }
 
 impl Application {
@@ -254,6 +390,10 @@ impl Application {
             signals,
             jobs,
             lsp_progress: LspProgressMap::new(),
+            pending_terminal_events: VecDeque::new(),
+            batch_scroll_state: None,
+            batch_scroll_flush_deadline: None,
+            last_scroll_render_at: None,
             theme_mode,
         };
 
@@ -293,6 +433,398 @@ impl Application {
         self.terminal.draw(pos, kind).unwrap();
     }
 
+    #[cfg(not(windows))]
+    fn terminal_key_event(event: &TerminalEvent) -> Option<helix_view::input::KeyEvent> {
+        match event {
+            termina::Event::Key(key) => Some((*key).into()),
+            _ => None,
+        }
+    }
+
+    #[cfg(windows)]
+    fn terminal_key_event(event: &TerminalEvent) -> Option<helix_view::input::KeyEvent> {
+        match event {
+            crossterm::event::Event::Key(key) => Some((*key).into()),
+            _ => None,
+        }
+    }
+
+    #[cfg(not(windows))]
+    fn terminal_key_event_parts(
+        event: &TerminalEvent,
+    ) -> Option<(helix_view::input::KeyEvent, TerminalKeyEventKind)> {
+        match event {
+            termina::Event::Key(key) => Some((
+                (*key).into(),
+                match key.kind {
+                    termina::event::KeyEventKind::Release => TerminalKeyEventKind::Release,
+                    _ => TerminalKeyEventKind::Press,
+                },
+            )),
+            _ => None,
+        }
+    }
+
+    #[cfg(windows)]
+    fn terminal_key_event_parts(
+        event: &TerminalEvent,
+    ) -> Option<(helix_view::input::KeyEvent, TerminalKeyEventKind)> {
+        match event {
+            crossterm::event::Event::Key(key) => Some((
+                (*key).into(),
+                match key.kind {
+                    crossterm::event::KeyEventKind::Release => TerminalKeyEventKind::Release,
+                    _ => TerminalKeyEventKind::Press,
+                },
+            )),
+            _ => None,
+        }
+    }
+
+    fn interruptible_scroll_event(
+        &mut self,
+        event: &TerminalEvent,
+    ) -> Option<InterruptibleScrollCommand> {
+        let key = Self::terminal_key_event(event)?;
+        let mode = self.editor.mode();
+        let editor_view = self.compositor.find::<ui::EditorView>()?;
+        if !editor_view.keymaps.pending().is_empty() || editor_view.keymaps.sticky().is_some() {
+            return None;
+        }
+
+        match editor_view.keymaps.peek(mode, key) {
+            crate::keymap::KeymapResult::Matched(command) => {
+                InterruptibleScrollCommand::from_command_name(command.name())
+            }
+            _ => None,
+        }
+    }
+
+    fn is_scroll_key_release(event: &TerminalEvent) -> bool {
+        Self::terminal_key_event_parts(event)
+            .is_some_and(|(_, kind)| kind == TerminalKeyEventKind::Release)
+    }
+
+    fn touch_batch_scroll_deadline(&mut self) {
+        self.batch_scroll_flush_deadline = Some(Instant::now() + SCROLL_BATCH_IDLE_FLUSH);
+    }
+
+    fn clear_batch_scroll_deadline(&mut self) {
+        self.batch_scroll_flush_deadline = None;
+    }
+
+    /// Clear all batch scroll state and deadline (used when external events
+    /// like callbacks modify editor state, making any pending batch stale).
+    fn clear_batch_scroll_state(&mut self) {
+        self.batch_scroll_state = None;
+        self.clear_batch_scroll_deadline();
+    }
+
+    /// Returns true if we should render a scroll batch immediately.
+    /// First scroll in a burst always renders immediately (user feedback).
+    /// Subsequent scrolls only render if enough time has passed since last render
+    /// (progressive rendering for VDI performance).
+    fn should_render_scroll_batch(&self) -> bool {
+        match (self.batch_scroll_state, self.last_scroll_render_at) {
+            // No pending batch = nothing to render
+            (None, _) => false,
+            // First scroll in batch = always render immediately
+            (Some(batch), _) if !batch.rendered => true,
+            // Subsequent scrolls = rate-limited render
+            (Some(_), Some(last_render)) => {
+                last_render.elapsed() >= SCROLL_BATCH_MIN_RENDER_INTERVAL
+            }
+            // No last render time recorded = render
+            (Some(_), None) => true,
+        }
+    }
+
+    /// Flush a pending scroll batch once input has been idle for a short period.
+    fn flush_batch_scroll_if_idle(&mut self) -> bool {
+        if self.batch_scroll_state.is_none() {
+            self.clear_batch_scroll_deadline();
+            return false;
+        }
+        if self
+            .batch_scroll_flush_deadline
+            .is_some_and(|deadline| Instant::now() >= deadline)
+        {
+            self.clear_batch_scroll_deadline();
+            return self.flush_batch_scroll();
+        }
+        false
+    }
+
+    /// Apply the accumulated scroll distance. If `mark_rendered` is true, marks the
+    /// batch as rendered (for progressive rendering). Returns true if scroll was applied.
+    fn apply_batch_scroll(&mut self, mark_rendered: bool) -> bool {
+        let (command, count) = {
+            let batch = match self.batch_scroll_state.as_mut() {
+                Some(b) => b,
+                None => return false,
+            };
+            if batch.count == 0 {
+                return false;
+            }
+            // Extract data from batch while we have the mutable reference
+            (batch.command, batch.count)
+        };
+        let count = count.min(self.batch_scroll_steps_cap(command));
+        self.execute_batch_scroll(command, count);
+        if mark_rendered {
+            // Mark batch as rendered for progressive rendering tracking
+            if let Some(batch) = self.batch_scroll_state.as_mut() {
+                batch.rendered = true;
+            }
+        }
+        true
+    }
+
+    /// Flush (consume) the pending scroll batch. Returns true if a batch was pending.
+    fn flush_batch_scroll(&mut self) -> bool {
+        let batch = self.batch_scroll_state.take();
+        if batch.is_none() {
+            return false;
+        }
+        self.clear_batch_scroll_deadline();
+        if batch.as_ref().is_some_and(|b| b.count == 0) {
+            return false;
+        }
+        let batch = batch.unwrap();
+        let count = batch.count.min(self.batch_scroll_steps_cap(batch.command));
+        self.execute_batch_scroll(batch.command, count);
+        // Only finalize if editor is still open (execute may close views/docs)
+        if self.editor.should_close() {
+            return true;
+        }
+        self.finish_batch_scroll();
+        true
+    }
+
+    fn batch_scroll_steps_cap(&mut self, command: InterruptibleScrollCommand) -> usize {
+        if command.uses_count() {
+            MAX_BATCH_SCROLL_STEPS
+        } else {
+            MAX_BATCH_PAGE_REPEATS
+        }
+    }
+
+    fn finish_batch_scroll(&mut self) {
+        self.editor.reset_idle_timer();
+        let scrolloff = self.editor.config().scrolloff;
+        let (view, doc) = current!(self.editor);
+        view.ensure_cursor_in_view(doc, scrolloff);
+    }
+
+    /// Merge scroll key presses into the current batch without rendering.
+    fn accumulate_batch_scroll(&mut self, command: InterruptibleScrollCommand) {
+        if let Some(batch) = self.batch_scroll_state {
+            if batch.command == command {
+                self.batch_scroll_state = Some(BatchScrollState {
+                    command,
+                    count: batch.count + 1,
+                    rendered: batch.rendered,
+                });
+                return;
+            }
+            // Direction changed: apply the previous distance silently, then restart.
+            self.flush_batch_scroll();
+        }
+        // New batch: not yet rendered, caller should render immediately.
+        self.batch_scroll_state = Some(BatchScrollState {
+            command,
+            count: 1,
+            rendered: false,
+        });
+    }
+
+    /// Absorb immediately available scroll presses; ignore release events so
+    /// press/release repeat patterns still coalesce into one render.
+    async fn ingest_immediate_scroll_presses<S>(&mut self, input_stream: &mut S) -> bool
+    where
+        S: Stream<Item = std::io::Result<TerminalEvent>> + Unpin,
+    {
+        let mut interrupted = false;
+        let mut captured = 0;
+
+        while captured < MAX_IMMEDIATE_TERMINAL_EVENT_CAPTURE {
+            let Some(next_event) = poll_stream_immediately(input_stream).await else {
+                break;
+            };
+            captured += 1;
+
+            match next_event {
+                Ok(event) => {
+                    if let Some(scroll_cmd) = self.interruptible_scroll_event(&event) {
+                        if Self::is_scroll_key_release(&event) {
+                            continue;
+                        }
+                        self.accumulate_batch_scroll(scroll_cmd);
+                        self.touch_batch_scroll_deadline();
+                    } else {
+                        self.flush_batch_scroll();
+                        self.pending_terminal_events.push_back(Ok(event));
+                        interrupted = true;
+                        break;
+                    }
+                }
+                Err(e) => {
+                    self.flush_batch_scroll();
+                    self.pending_terminal_events.push_back(Err(e));
+                    interrupted = true;
+                    break;
+                }
+            }
+        }
+
+        interrupted
+    }
+
+    async fn ingest_scroll_press<S>(
+        &mut self,
+        scroll_cmd: InterruptibleScrollCommand,
+        input_stream: &mut S,
+    ) where
+        S: Stream<Item = std::io::Result<TerminalEvent>> + Unpin,
+    {
+        // Caller has already determined this is a scroll event.
+        self.accumulate_batch_scroll(scroll_cmd);
+        self.touch_batch_scroll_deadline();
+        self.ingest_immediate_scroll_presses(input_stream).await;
+    }
+
+    fn execute_batch_scroll(&mut self, command: InterruptibleScrollCommand, count: usize) {
+        if count == 0 {
+            return;
+        }
+
+        let mut cx = crate::commands::Context {
+            editor: &mut self.editor,
+            count: NonZero::new(1),
+            register: None,
+            callback: Vec::new(),
+            on_next_key_callback: None,
+            jobs: &mut self.jobs,
+        };
+
+        if command.uses_count() {
+            cx.count = NonZero::new(count);
+            command.mappable().execute(&mut cx);
+        } else {
+            for _ in 0..count {
+                command.mappable().execute(&mut cx);
+            }
+        }
+    }
+
+    async fn handle_terminal_event_batch<S>(
+        &mut self,
+        input_stream: &mut S,
+        first_event: std::io::Result<TerminalEvent>,
+    ) where
+        S: Stream<Item = std::io::Result<TerminalEvent>> + Unpin,
+    {
+        if let Ok(event) = &first_event {
+            if let Some(scroll_cmd) = self.interruptible_scroll_event(event) {
+                if Self::is_scroll_key_release(event) {
+                    self.ingest_immediate_scroll_presses(input_stream).await;
+                } else {
+                    self.ingest_scroll_press(scroll_cmd, input_stream).await;
+                }
+                // Progressive rendering: apply and render immediately for first scroll
+                // in burst (user feedback), or rate-limited for subsequent scrolls.
+                if self.should_render_scroll_batch() {
+                    if self.apply_batch_scroll(true) && !self.editor.should_close() {
+                        self.last_scroll_render_at = Some(Instant::now());
+                        self.render().await;
+                    }
+                }
+                return;
+            }
+        }
+
+        let mut should_redraw = self.flush_batch_scroll();
+
+        match first_event {
+            Ok(event) => {
+                should_redraw |= self.handle_terminal_event(Ok(event));
+            }
+            Err(e) => {
+                should_redraw |= self.handle_terminal_event(Err(e));
+            }
+        }
+
+        if should_redraw && !self.editor.should_close() {
+            self.render().await;
+        }
+    }
+
+    fn handle_terminal_event(&mut self, event: std::io::Result<TerminalEvent>) -> bool {
+        #[cfg(not(windows))]
+        use termina::escape::csi;
+
+        let mut cx = crate::compositor::Context {
+            editor: &mut self.editor,
+            jobs: &mut self.jobs,
+            scroll: None,
+        };
+
+        match event.unwrap() {
+            #[cfg(not(windows))]
+            termina::Event::WindowResized(termina::WindowSize { rows, cols, .. }) => {
+                self.terminal
+                    .resize(Rect::new(0, 0, cols, rows))
+                    .expect("Unable to resize terminal");
+
+                let area = self.terminal.size();
+
+                self.compositor.resize(area);
+
+                self.compositor
+                    .handle_event(&Event::Resize(cols, rows), &mut cx)
+            }
+            #[cfg(not(windows))]
+            // Ignore keyboard release events.
+            termina::Event::Key(termina::event::KeyEvent {
+                kind: termina::event::KeyEventKind::Release,
+                ..
+            }) => false,
+            #[cfg(not(windows))]
+            termina::Event::Csi(csi::Csi::Mode(csi::Mode::ReportTheme(mode))) => {
+                self.theme_mode = Some(mode.into());
+                Self::load_configured_theme(
+                    &mut self.editor,
+                    &self.config.load(),
+                    &mut self.terminal,
+                    self.theme_mode,
+                );
+                true
+            }
+            #[cfg(windows)]
+            TerminalEvent::Resize(width, height) => {
+                self.terminal
+                    .resize(Rect::new(0, 0, width, height))
+                    .expect("Unable to resize terminal");
+
+                let area = self.terminal.size();
+
+                self.compositor.resize(area);
+
+                self.compositor
+                    .handle_event(&Event::Resize(width, height), &mut cx)
+            }
+            #[cfg(windows)]
+            // Ignore keyboard release events.
+            crossterm::event::Event::Key(crossterm::event::KeyEvent {
+                kind: crossterm::event::KeyEventKind::Release,
+                ..
+            }) => false,
+            #[cfg(not(windows))]
+            event if event.is_escape() => false,
+            event => self.compositor.handle_event(&event.into(), &mut cx),
+        }
+    }
+
     pub async fn event_loop<S>(&mut self, input_stream: &mut S)
     where
         S: Stream<Item = std::io::Result<TerminalEvent>> + Unpin,
@@ -315,7 +847,27 @@ impl Application {
                 return false;
             }
 
+            // Only check flush when a deadline is active — avoids needless calls
+            // when no batch is pending.
+            if self.batch_scroll_flush_deadline.is_some()
+                && self.flush_batch_scroll_if_idle()
+            {
+                if !self.editor.should_close() {
+                    self.render().await;
+                }
+                continue;
+            }
+
+            if let Some(event) = self.pending_terminal_events.pop_front() {
+                self.handle_terminal_event_batch(input_stream, event).await;
+                continue;
+            }
+
             use futures_util::StreamExt;
+
+            let scroll_flush_sleep = self
+                .batch_scroll_flush_deadline
+                .and_then(|deadline| deadline.checked_duration_since(Instant::now()));
 
             tokio::select! {
                 biased;
@@ -326,13 +878,22 @@ impl Application {
                     };
                 }
                 Some(event) = input_stream.next() => {
-                    self.handle_terminal_events(event).await;
+                    self.handle_terminal_event_batch(input_stream, event).await;
+                }
+                _ = tokio::time::sleep(
+                    scroll_flush_sleep.unwrap_or(Duration::ZERO)
+                ), if scroll_flush_sleep.is_some() => {
+                    if self.flush_batch_scroll_if_idle() && !self.editor.should_close() {
+                        self.render().await;
+                    }
                 }
                 Some(callback) = self.jobs.callbacks.recv() => {
+                    self.clear_batch_scroll_state();
                     self.jobs.handle_callback(&mut self.editor, &mut self.compositor, Ok(Some(callback)));
                     self.render().await;
                 }
                 Some(msg) = self.jobs.status_messages.recv() => {
+                    self.clear_batch_scroll_state();
                     let severity = match msg.severity{
                         helix_event::status::Severity::Hint => Severity::Hint,
                         helix_event::status::Severity::Info => Severity::Info,
@@ -344,6 +905,7 @@ impl Application {
                     helix_event::request_redraw();
                 }
                 Some(callback) = self.jobs.wait_futures.next() => {
+                    self.clear_batch_scroll_state();
                     self.jobs.handle_callback(&mut self.editor, &mut self.compositor, callback);
                     self.render().await;
                 }
@@ -1361,6 +1923,98 @@ impl Application {
         }
 
         errs
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::poll_stream_immediately;
+    use futures_util::{Stream, StreamExt};
+    use std::{
+        pin::Pin,
+        sync::{Arc, Mutex},
+        task::{Context, Poll, Waker},
+        time::Duration,
+    };
+
+    struct OneShotState<T> {
+        item: Option<T>,
+        waker: Option<Waker>,
+    }
+
+    impl<T> Default for OneShotState<T> {
+        fn default() -> Self {
+            Self {
+                item: None,
+                waker: None,
+            }
+        }
+    }
+
+    struct OneShotStream<T> {
+        state: Arc<Mutex<OneShotState<T>>>,
+    }
+
+    struct OneShotSender<T> {
+        state: Arc<Mutex<OneShotState<T>>>,
+    }
+
+    impl<T> OneShotStream<T> {
+        fn new() -> (Self, OneShotSender<T>) {
+            let state = Arc::new(Mutex::new(OneShotState::default()));
+            (
+                Self {
+                    state: Arc::clone(&state),
+                },
+                OneShotSender { state },
+            )
+        }
+    }
+
+    impl<T> OneShotSender<T> {
+        fn send(self, item: T) {
+            let waker = {
+                let mut state = self.state.lock().unwrap();
+                state.item = Some(item);
+                state.waker.take()
+            };
+
+            if let Some(waker) = waker {
+                waker.wake();
+            }
+        }
+    }
+
+    impl<T> Stream for OneShotStream<T> {
+        type Item = T;
+
+        fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+            let mut state = self.state.lock().unwrap();
+            if let Some(item) = state.item.take() {
+                Poll::Ready(Some(item))
+            } else {
+                state.waker = Some(cx.waker().clone());
+                Poll::Pending
+            }
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn immediate_poll_keeps_real_waker_registered() {
+        let (mut stream, sender) = OneShotStream::new();
+
+        assert_eq!(poll_stream_immediately(&mut stream).await, None);
+
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            sender.send(42);
+        });
+
+        let item = tokio::time::timeout(Duration::from_secs(1), stream.next())
+            .await
+            .expect("stream should still be wakeable after an immediate poll");
+
+        assert_eq!(item, Some(42));
     }
 }
 
