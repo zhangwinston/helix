@@ -1,9 +1,8 @@
-//! Linux IME control implementation using IBus/FCITX D-Bus interfaces.
+//! Linux IME control implementation using IBus/FCITX command-line tools.
 
-use super::{ImeCapabilities, ImeController, ImeDetector, ImeInfo, ImeSettings, ImeType};
+use super::{ImeCapabilities, ImeController, ImeDetector, ImeInfo};
 use anyhow::{Context, Result};
 use std::process::Command;
-use std::time::Duration;
 
 /// Linux IME controller using IBus/FCITX D-Bus interfaces.
 pub struct LinuxImeController;
@@ -42,7 +41,8 @@ impl LinuxImeController {
         }
     }
 
-    /// Get active IME engine using FCITX
+    /// Get FCITX active engine name.
+    /// fcitx-remote returns: 0 = close, 1 = inactive, 2 = active
     fn get_fcitx_engine() -> Result<String> {
         let output = Command::new("fcitx-remote")
             .output()
@@ -50,14 +50,37 @@ impl LinuxImeController {
 
         if output.status.success() {
             let status = String::from_utf8_lossy(&output.stdout);
-            // FCITX returns different codes for active engine
             match status.trim() {
-                "1" => Ok("Active".to_string()),
-                "2" => Ok("Inactive".to_string()),
+                "0" => Ok("Closed".to_string()),
+                "1" => Ok("Inactive".to_string()),  // 1 = inactive (IME not active)
+                "2" => Ok("Active".to_string()),   // 2 = active (IME ready)
                 _ => Ok("Unknown".to_string()),
             }
         } else {
             Err(anyhow::anyhow!("fcitx-remote command failed"))
+        }
+    }
+
+    /// Query FCITX IME open/active status.
+    /// Returns: Ok(true) = active, Ok(false) = inactive/closed
+    fn query_fcitx_status() -> Result<bool> {
+        let output = Command::new("fcitx-remote")
+            .output()
+            .context("Failed to run fcitx-remote")?;
+
+        // fcitx-remote returns: 0 = close, 1 = inactive, 2 = active
+        // Only "active" (2) means IME is truly enabled
+        // "inactive" (1) means fcitx is running but IME is not activated
+        if output.status.success() {
+            let status = String::from_utf8_lossy(&output.stdout);
+            match status.trim() {
+                "0" => Ok(false),  // Closed
+                "1" => Ok(false),  // Inactive - fcitx running but IME not activated
+                "2" => Ok(true),   // Active - IME is enabled
+                _ => Err(anyhow::anyhow!("Unexpected fcitx-remote output: {}", status)),
+            }
+        } else {
+            Err(anyhow::anyhow!("fcitx-remote failed (fcitx not running?)"))
         }
     }
 }
@@ -66,14 +89,12 @@ impl ImeController for LinuxImeController {
     fn is_ime_enabled() -> Result<bool> {
         if Self::is_ibus_running() {
             match Self::get_ibus_engine() {
-                Ok(_engine) => Ok(true), // Assume IME is enabled if we can get engine
-                Err(_) => Ok(false),
+                Ok(engine) if !engine.is_empty() => Ok(true),
+                _ => Ok(false),
             }
         } else if Self::is_fcitx_running() {
-            match Self::get_fcitx_engine() {
-                Ok(status) => Ok(status != "Inactive"),
-                Err(_) => Ok(false),
-            }
+            // Use query_fcitx_status() which properly parses the return value
+            Self::query_fcitx_status()
         } else {
             // No IME daemon running
             Ok(false)
@@ -84,12 +105,13 @@ impl ImeController for LinuxImeController {
         if Self::is_ibus_running() {
             // IBus doesn't have a direct enable/disable command
             // We can only switch engines for now
-            log::info!("IBus detected - IME state control is limited on Linux");
+            log::debug!("IBus detected - IME state control is limited on Linux");
             Ok(())
         } else if Self::is_fcitx_running() {
-            // FCITX has enable/disable commands
+            // FCITX: use -o to activate (enable), -c to inactivate (disable)
+            // Note: -e means "Ask fcitx to exit" - do NOT use!
             let result = Command::new("fcitx-remote")
-                .arg(if enabled { "-e" } else { "-d" })
+                .arg(if enabled { "-o" } else { "-c" })
                 .output()
                 .context("Failed to run fcitx-remote for IME control")?;
 
@@ -111,7 +133,7 @@ impl ImeController for LinuxImeController {
         if Self::is_ibus_running() {
             match Self::get_ibus_engine() {
                 Ok(engine) => {
-                    let ime_type = ImeDetector::detect_ime_type(&engine);
+                    let _ime_type = ImeDetector::detect_ime_type(&engine);
                     Ok(ImeInfo {
                         name: format!("IBus - {}", engine),
                         version: None,
