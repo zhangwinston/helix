@@ -461,26 +461,45 @@ pub fn handle_mode_switch(
             });
         });
 
-        // EntireFile: cursor never changes the region; always read system IME here so we
-        // do not rely on cursor-move cache updates (those are skipped for EntireFile).
-        let current_ime_enabled = if detection.region == ImeSensitiveRegion::EntireFile {
-            let enabled = read_ime_enabled("mode switch (entire file)");
-            update_ime_cache(doc_id, view_id, new_mode, enabled);
-            enabled
-        } else {
-            let cached_ime_state =
-                registry::with_context_mut(doc_id, view_id, new_mode, |ctx| ctx.cached_ime_state);
-            cached_ime_state.unwrap_or_else(|| read_ime_enabled("mode switch"))
-        };
-
         // Decide what action to take (in lock, fast)
+        // When saved_state exists, always read the actual system state to determine if we need
+        // to change IME state. The cached state might be stale if the user manually toggled IME.
         let target_state = registry::with_context_mut(doc_id, view_id, new_mode, |ctx| {
+            // First check if we have saved_state - if so, we need to re-read system state
+            let has_saved_state = ctx.saved_state.is_some();
+
+            // Determine the current_ime_enabled based on whether we have saved state
+            // We must determine this BEFORE creating the engine to avoid borrow conflicts
+            let current_ime_enabled = if has_saved_state {
+                // Re-read system state since saved_state exists
+                // This handles the case where user manually toggled IME after our last update
+                read_ime_enabled("mode switch (with saved state)")
+            } else {
+                // No saved state, use the cached value
+                // For EntireFile, always use system state; for others, use cache or fallback
+                if detection.region == ImeSensitiveRegion::EntireFile {
+                    read_ime_enabled("mode switch (entire file)")
+                } else {
+                    ctx.cached_ime_state.unwrap_or_else(|| read_ime_enabled("mode switch"))
+                }
+            };
+
+            // Now create engine and get the decision - all ctx access must happen here
             let mut engine = ImeEngine::new(ctx);
-            engine.on_enter_insert(detection.region, current_ime_enabled)
+            let decision = engine.on_enter_insert(detection.region, current_ime_enabled);
+
+            // Update cache with the system state we just read
+            ctx.cached_ime_state = Some(current_ime_enabled);
+
+            decision
         });
 
         // Execute system API call (outside lock to avoid blocking other operations)
         if let Some(target) = target_state {
+            log::trace!(
+                "IME: mode switch entering insert, calling set_ime_enabled({})",
+                target
+            );
             if let Err(e) = set_ime_enabled(target) {
                 log::error!(
                     "Failed to restore IME state when entering Insert mode: {}",
@@ -490,6 +509,12 @@ pub fn handle_mode_switch(
                 // Update cache after successful state change
                 update_ime_cache(doc_id, view_id, new_mode, target);
             }
+        } else {
+            let saved = registry::with_context_mut(doc_id, view_id, new_mode, |ctx| ctx.saved_state);
+            log::trace!(
+                "IME: mode switch entering insert, no action (saved_state={:?})",
+                saved
+            );
         }
     }
 

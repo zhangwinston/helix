@@ -78,8 +78,7 @@ impl<'ctx> ImeEngine<'ctx> {
         self.ctx.current_region = Some(region);
 
         if is_sensitive(region) {
-            // Moving to sensitive region: restore saved state from previous sensitive region visit
-            // If saved_state is None, don't change IME state (keep current state)
+            // Moving to sensitive region: restore saved state if exists
             if let Some(saved) = self.ctx.saved_state {
                 log::trace!(
                     "IME engine: moving to sensitive region, restoring saved state={}",
@@ -87,39 +86,24 @@ impl<'ctx> ImeEngine<'ctx> {
                 );
                 return desired_state(saved, current_ime_enabled);
             }
-            // No saved state: if coming from another sensitive region, save current state first
-            // This ensures consistent behavior when moving between sensitive regions
-            if let Some(prev) = prev_region {
-                if is_sensitive(prev) {
-                    // Moving from one sensitive region to another: save current state
-                    log::trace!(
-                        "IME engine: moving between sensitive regions, saving current state={}",
-                        current_ime_enabled
-                    );
-                    self.ctx.saved_state = Some(current_ime_enabled);
-                    // Keep current IME state (no change)
-                    return None;
-                }
-            }
-            // No saved state and not coming from sensitive region: don't change IME
+            // No saved state: don't enable IME automatically
+            // The user needs to manually enable IME first, then it will be restored
             log::trace!(
-                "IME engine: moving to sensitive region, no saved state, keeping current IME state"
+                "IME engine: moving to sensitive region, no saved state, not enabling IME"
             );
             return None;
         }
 
-        // Non-sensitive region: only save state if coming from sensitive region
-        // This ensures saved_state represents the state in sensitive regions
+        // Non-sensitive region: save state if coming from sensitive region
         if let Some(prev) = prev_region {
             if is_sensitive(prev) {
-                // Coming from sensitive region: save the state (this is the state we want to restore)
+                // Coming from sensitive region: save the state
                 log::trace!(
                     "IME engine: moving from sensitive to non-sensitive, saving state={}",
                     current_ime_enabled
                 );
                 self.ctx.saved_state = Some(current_ime_enabled);
             }
-            // If coming from non-sensitive region, don't overwrite saved_state
         }
         log::trace!("IME engine: moving to non-sensitive region, disabling IME");
         desired_state(false, current_ime_enabled)
@@ -131,10 +115,12 @@ impl<'ctx> ImeEngine<'ctx> {
         // and we don't want to overwrite the saved state from previous sensitive region visits
         if let Some(region) = self.ctx.current_region {
             if is_sensitive(region) {
-                // In sensitive region: save the current IME state (this is what we want to restore)
+                // In sensitive region: save the current IME state
+                // This allows us to restore the state when re-entering Insert mode
+                // The saved state represents whether IME was enabled when we last left Insert mode
                 log::trace!(
-                    "IME engine: exiting insert from sensitive region, saving state={}",
-                    current_ime_enabled
+                    "IME engine: exiting insert from sensitive region {:?}, IME is enabled={}, updating saved_state",
+                    region, current_ime_enabled
                 );
                 self.ctx.saved_state = Some(current_ime_enabled);
             } else {
@@ -159,16 +145,26 @@ impl<'ctx> ImeEngine<'ctx> {
         region: ImeSensitiveRegion,
         current_ime_enabled: bool,
     ) -> Option<bool> {
+        let prev_saved_state = self.ctx.saved_state;
         self.ctx.mode = Mode::Insert;
         self.ctx.current_region = Some(region);
 
         if is_sensitive(region) {
             // Restore saved state from previous sensitive region visit
-            // If saved_state is None, don't change IME state (keep current state)
             if let Some(saved) = self.ctx.saved_state {
-                return desired_state(saved, current_ime_enabled);
+                log::trace!(
+                    "IME engine: entering insert in sensitive region {:?}, saved_state={}, current_ime={}, prev_saved_state={:?}",
+                    region, saved, current_ime_enabled, prev_saved_state
+                );
+                // Always call set_ime_enabled to restore the saved state
+                return Some(saved);
             }
-            // No saved state: don't change IME
+            // No saved state: this is the first time entering a sensitive region
+            // Don't enable IME automatically - wait for user to manually toggle if needed
+            log::trace!(
+                "IME engine: first entry to sensitive region {:?}, not enabling IME automatically (no saved state), prev_saved_state={:?}",
+                region, prev_saved_state
+            );
             return None;
         }
 
@@ -237,15 +233,15 @@ mod tests {
     }
 
     #[test]
-    fn entering_sensitive_region_without_saved_state_keeps_current_state() {
+    fn entering_sensitive_region_without_saved_state_keeps_ime_disabled() {
         let mut ctx = ImeContext::new(Mode::Insert);
         let mut engine = ImeEngine::new(&mut ctx);
 
-        // No saved state: don't change IME (for region change, not enter insert)
+        // No saved state: don't enable IME automatically
         let action = engine.on_region_change(ImeSensitiveRegion::StringContent, false);
 
-        assert_eq!(action, None);
-        assert_eq!(ctx.saved_state, None);
+        assert_eq!(action, None); // No action - IME stays disabled
+        assert_eq!(ctx.saved_state, None); // State not saved
     }
 
     #[test]
@@ -339,19 +335,19 @@ mod tests {
     }
 
     #[test]
-    fn moving_from_code_to_comment_without_saved_state_keeps_current() {
+    fn moving_from_code_to_comment_without_saved_state_keeps_ime_disabled() {
         let mut ctx = ImeContext::new(Mode::Insert);
         ctx.current_region = Some(ImeSensitiveRegion::Code);
         ctx.saved_state = None; // No saved state from sensitive region
 
-        // Move from code to comment: no saved state, don't change IME
+        // Move from code to comment: no saved state, don't enable IME
         {
             let mut engine = ImeEngine::new(&mut ctx);
             let action = engine.on_region_change(ImeSensitiveRegion::CommentContent, false);
-            assert_eq!(action, None); // Don't change IME
+            assert_eq!(action, None); // No action - IME stays disabled
         }
         assert_eq!(ctx.current_region, Some(ImeSensitiveRegion::CommentContent));
-        assert_eq!(ctx.saved_state, None);
+        assert_eq!(ctx.saved_state, None); // State not saved
     }
 
     #[test]

@@ -17,6 +17,7 @@ pub struct ImeInfo {
 
 /// IME capability levels
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum ImeCapabilities {
     /// Only basic on/off control
     Basic,
@@ -52,6 +53,7 @@ pub trait ImeController {
     /// Check if an IME is available and functional.
     ///
     /// Some systems may not have any IME installed or configured.
+    #[allow(dead_code)]
     fn is_ime_available() -> bool;
 
     /// Perform platform-specific initialization.
