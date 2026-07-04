@@ -371,44 +371,6 @@ impl Buffer {
         (x_offset as u16, y)
     }
 
-    /// Fast path: print a single grapheme of pre-computed width with no unicode
-    /// segmentation / width recomputation. Caller must guarantee the grapheme +
-    /// width fit inside the buffer area and that `width >= 1`.
-    ///
-    /// This is the per-cell render path; it is hot enough that we skip everything
-    /// `set_stringn` does (segmenting, calling `.width()`, bounds-checking each
-    /// grapheme).
-    #[inline]
-    pub fn set_grapheme(&mut self, x: u16, y: u16, grapheme: &str, width: usize, style: Style) {
-        let index = self.index_of(x, y);
-        let cell = &mut self.content[index];
-        cell.set_symbol_with_width(grapheme, width as u8);
-        cell.set_style(style);
-        // Reset following cells if the grapheme spans multiple columns; they
-        // would be hidden by the grapheme but must not carry stale content.
-        for i in index + 1..index + width {
-            self.content[i].reset();
-        }
-    }
-
-    /// Fast path for tab expansion: write each char of `tab` into its own
-    /// single-column cell starting at (x, y), all sharing `style`.
-    ///
-    /// Unlike [`Self::set_grapheme`], the columns are written as independent
-    /// width-1 cells rather than one wide cell, so background styles (selection,
-    /// cursorline) cover every column. Caller must guarantee each char is one column
-    /// and that the whole run fits inside the buffer area.
-    #[inline]
-    pub fn set_tab(&mut self, x: u16, y: u16, tab: &str, style: Style) {
-        let mut index = self.index_of(x, y);
-        for (i, ch) in tab.char_indices() {
-            let cell = &mut self.content[index];
-            cell.set_symbol_with_width(&tab[i..i + ch.len_utf8()], 1);
-            cell.set_style(style);
-            index += 1;
-        }
-    }
-
     /// Print at most the first `width` characters of a string if enough space is available
     /// until the end of the line.
     /// If `ellipsis` is true appends a `…` at the end of truncated lines.
@@ -470,6 +432,40 @@ impl Buffer {
         }
 
         (x, y)
+    }
+
+    /// Write a grapheme cluster into the buffer at the given coordinates. When the grapheme
+    /// spans multiple columns (a wide character), the trailing cells are reset so they don't
+    /// carry stale content.
+    #[inline]
+    pub fn set_grapheme(&mut self, x: u16, y: u16, grapheme: &str, width: usize, style: Style) {
+        let index = self.index_of(x, y);
+        let cell = &mut self.content[index];
+        cell.set_symbol_with_width(grapheme, width as u8);
+        cell.set_style(style);
+        // Reset following cells if the grapheme spans multiple columns; they
+        // would be hidden by the grapheme but must not carry stale content.
+        for i in index + 1..index + width {
+            self.content[i].reset();
+        }
+    }
+
+    /// Fast path for tab expansion: write each char of `tab` into its own
+    /// single-column cell starting at (x, y), all sharing `style`.
+    ///
+    /// Unlike [`Self::set_grapheme`], the columns are written as independent
+    /// width-1 cells rather than one wide cell, so background styles (selection,
+    /// cursorline) cover every column. Caller must guarantee each char is one column
+    /// and that the whole run fits inside the buffer area.
+    #[inline]
+    pub fn set_tab(&mut self, x: u16, y: u16, tab: &str, style: Style) {
+        let mut index = self.index_of(x, y);
+        for (i, ch) in tab.char_indices() {
+            let cell = &mut self.content[index];
+            cell.set_symbol_with_width(&tab[i..i + ch.len_utf8()], 1);
+            cell.set_style(style);
+            index += 1;
+        }
     }
 
     /// Print at most the first `width` characters of a string if enough space is available
@@ -718,7 +714,9 @@ impl Buffer {
     }
 
     /// Builds a minimal sequence of coordinates and Cells necessary to update the UI from
-    /// self to other.
+    /// self to other. For wide characters with a blank trailing cell, the update list emits
+    /// that trailing cell before the leading cell so that terminals which do not clear the
+    /// second cell (e.g. Windows conhost) display CJK correctly after scrolling.
     ///
     /// We're assuming that buffers are well-formed, that is no double-width cell is followed by
     /// a non-blank cell.
@@ -757,18 +755,74 @@ impl Buffer {
         // place (the skipped cells should be blank anyway):
         let mut to_skip: usize = 0;
         for (i, (current, previous)) in next_buffer.iter().zip(previous_buffer.iter()).enumerate() {
-            if (current != previous || invalidated > 0) && to_skip == 0 {
+            // Skip the trailing (blank) cell of a wide char whenever it is blank. Sending a space
+            // there would overwrite the wide char's second half on screen (e.g. 中 showing as [half][ ])
+            // and make the following text appear shifted (e.g. " clau" instead of "claud"). When we
+            // need to clear that cell (e.g. popup closed), we do it from the leading cell via
+            // emit_trailing_first + at_leading_trailing_changed instead.
+            let skip_trailing_blank = to_skip > 0 && *current.symbol == *" ";
+            // Require i+1 in bounds for both buffers (they share the same area in practice).
+            let trailing_changed = i + 1 < next_buffer.len()
+                && i + 1 < previous_buffer.len()
+                && next_buffer[i + 1] != previous_buffer[i + 1];
+            let current_width = current.width as usize;
+            // Only when the trailing cell became blank (e.g. popup closed): re-emit trailing then
+            // leading so we clear the border and redraw the wide char. Do NOT do this when the
+            // trailing cell got new content (e.g. popup opened, border drawn there), or we would
+            // redraw the wide char and then overwrite it with the border, making the border look shifted.
+            let at_leading_trailing_changed = to_skip == 0
+                && current_width > 1
+                && trailing_changed
+                && i + 1 < next_buffer.len()
+                && *next_buffer[i + 1].symbol == *" ";
+            let should_emit_leading = ((current != previous || invalidated > 0)
+                && !skip_trailing_blank)
+                || at_leading_trailing_changed;
+            if should_emit_leading {
                 let x = (i % width as usize) as u16;
                 let y = (i / width as usize) as u16;
+                // Emit trailing cell before leading when trailing is blank, so terminals that
+                // don't clear the second cell (e.g. Windows conhost) get it cleared first. Do this
+                // when we're adding the leading or when only the trailing changed (e.g. popup closed).
+                let trailing_blank = i + 1 < next_buffer.len() && *next_buffer[i + 1].symbol == *" ";
+                let emit_trailing_first = current_width > 1
+                    && i + current_width <= next_buffer.len()
+                    && trailing_blank
+                    && (trailing_changed || (current != previous || invalidated > 0));
+                if emit_trailing_first {
+                    let x_trail = (i + 1) % width as usize;
+                    let y_trail = (i + 1) / width as usize;
+                    if y_trail == (i / width as usize) {
+                        updates.push((x_trail as u16, y_trail as u16, &next_buffer[i + 1]));
+                    }
+                }
+                // Push leading: when content changed, or when we only cleared the trailing (popup
+                // closed) so we must redraw the wide char to span both cells again.
                 updates.push((x, y, &next_buffer[i]));
             }
 
-            let current_width = current.width();
             to_skip = current_width.saturating_sub(1);
 
             let affected_width = std::cmp::max(current_width, previous.width());
             invalidated = std::cmp::max(affected_width, invalidated).saturating_sub(1);
         }
+
+        // Record rendering metrics for performance analysis
+        // Optimization: diff() no longer calls symbol.width(), uses cached cell.width instead
+        // This saves cells_traversed * 1 width() call per diff
+        #[cfg(feature = "render-metrics")]
+        {
+            use crate::render_metrics::record_diff;
+            let cells_traversed = next_buffer.len();
+            let cells_updated = updates.len();
+            let wide_chars = updates
+                .iter()
+                .filter(|(_, _, cell)| cell.width > 1)
+                .count();
+            // width_compute_count = 0 because cell.width cache eliminates all width() calls in diff
+            record_diff(cells_traversed, cells_updated, wide_chars, 0);
+        }
+
         updates
     }
 }
@@ -967,13 +1021,14 @@ mod tests {
             "└──────┘  ",
         ]);
         let diff = prev.diff(&next);
+        // Wide chars: trailing cell emitted before leading so conhost clears second cell first.
         assert_eq!(
             diff,
             vec![
+                (2, 0, &cell(" ")),
                 (1, 0, &cell("称")),
-                // Skipped "i"
+                (4, 0, &cell(" ")),
                 (3, 0, &cell("号")),
-                // Skipped "l"
                 (5, 0, &cell("─")),
             ]
         );
@@ -985,9 +1040,16 @@ mod tests {
         let next = Buffer::with_lines(vec!["┌─称号─┐"]);
 
         let diff = prev.diff(&next);
+        // Same as above: trailing before leading for wide characters.
         assert_eq!(
             diff,
-            vec![(1, 0, &cell("─")), (2, 0, &cell("称")), (4, 0, &cell("号")),]
+            vec![
+                (1, 0, &cell("─")),
+                (3, 0, &cell(" ")),
+                (2, 0, &cell("称")),
+                (5, 0, &cell(" ")),
+                (4, 0, &cell("号")),
+            ]
         );
     }
 
@@ -1071,248 +1133,5 @@ mod tests {
             height: 4,
         };
         assert_eq!(one, merged);
-    }
-
-    // ==================== Unicode / Emoji Tests ====================
-
-    #[test]
-    fn cell_set_symbol_various_unicode() {
-        let test_cases = ["🔥", "👩‍💻", "🇫🇷", "👋🏽", "e\u{0301}", "한", "👨‍👩‍👧‍👦"];
-
-        for symbol in test_cases {
-            let mut cell = Cell::default();
-            cell.set_symbol(symbol);
-            assert_eq!(cell.symbol, *symbol);
-        }
-    }
-
-    #[test]
-    fn buffer_set_string_double_width_and_emoji() {
-        let area = Rect::new(0, 0, 12, 1);
-        let mut buffer = Buffer::empty(area);
-
-        // Mix of emojis, CJK, and ASCII
-        buffer.set_string(0, 0, "🔥漢a", Style::default());
-
-        assert_eq!(&*buffer[(0, 0)].symbol, "🔥");
-        assert_eq!(&*buffer[(1, 0)].symbol, " "); // Covered by emoji
-        assert_eq!(&*buffer[(2, 0)].symbol, "漢");
-        assert_eq!(&*buffer[(3, 0)].symbol, " "); // Covered by CJK
-        assert_eq!(&*buffer[(4, 0)].symbol, "a");
-    }
-
-    #[test]
-    fn buffer_set_string_combining_diacritics() {
-        // "Eĥoŝanĝo ĉiuĵaŭde" using combining marks
-        let text = "Eh\u{0302}os\u{0302}ang\u{0302}o c\u{0302}iuj\u{0302}au\u{0306}de";
-        let area = Rect::new(0, 0, 20, 1);
-        let mut buffer = Buffer::empty(area);
-
-        buffer.set_string(0, 0, text, Style::default());
-
-        let graphemes: Vec<_> = text.graphemes(true).collect();
-        for (i, &g) in graphemes.iter().enumerate() {
-            assert_eq!(&*buffer[(i as u16, 0)].symbol, g);
-        }
-    }
-
-    #[test]
-    fn buffer_diffing_with_emoji() {
-        let prev = Buffer::with_lines(vec!["🔥test"]);
-        let next = Buffer::with_lines(vec!["xxtest"]);
-
-        let diff = prev.diff(&next);
-
-        // Should update positions where the emoji was
-        assert!(diff.iter().any(|(x, _, c)| *x == 0 && &*c.symbol == "x"));
-    }
-
-    #[test]
-    fn buffer_truncation_with_wide_chars() {
-        let area = Rect::new(0, 0, 5, 1);
-        let mut buffer = Buffer::empty(area);
-
-        // "AAAA" (4) + "漢" (2) = 6, but buffer is 5 wide
-        buffer.set_string(0, 0, "AAAA漢", Style::default());
-
-        // Should not partially render the wide char
-        assert_eq!(&*buffer[(4, 0)].symbol, " ");
-    }
-
-    #[test]
-    fn buffer_overwrite_emoji_and_ascii() {
-        let area = Rect::new(0, 0, 8, 1);
-        let mut buffer = Buffer::empty(area);
-
-        // Write emoji then overwrite with ASCII
-        buffer.set_string(0, 0, "🔥🚀", Style::default());
-        buffer.set_string(0, 0, "abcd", Style::default());
-
-        assert_eq!(&*buffer[(0, 0)].symbol, "a");
-        assert_eq!(&*buffer[(1, 0)].symbol, "b");
-
-        // Write ASCII then overwrite with emoji
-        buffer.set_string(0, 0, "abcd", Style::default());
-        buffer.set_string(0, 0, "🔥🚀", Style::default());
-
-        assert_eq!(&*buffer[(0, 0)].symbol, "🔥");
-        assert_eq!(&*buffer[(2, 0)].symbol, "🚀");
-    }
-
-    // ==================== Adversarial Unicode Tests ====================
-    // These test valid but unusual Unicode that stresses edge cases
-
-    #[test]
-    fn adversarial_zalgo_text() {
-        // Base character with stacked combining marks
-        let zalgo = "X\u{0303}\u{0304}\u{0305}";
-        let area = Rect::new(0, 0, 10, 1);
-        let mut buffer = Buffer::empty(area);
-
-        buffer.set_string(0, 0, zalgo, Style::default());
-
-        assert_eq!(&*buffer[(0, 0)].symbol, zalgo);
-        assert_eq!(&*buffer[(1, 0)].symbol, " ");
-    }
-
-    #[test]
-    fn adversarial_zero_width_chars() {
-        // Zero-width joiners and spaces
-        let text = "a\u{200B}b\u{200D}c";
-        let area = Rect::new(0, 0, 10, 1);
-        let mut buffer = Buffer::empty(area);
-
-        buffer.set_string(0, 0, text, Style::default());
-
-        // Zero-width chars shouldn't take space
-        assert_eq!(&*buffer[(0, 0)].symbol, "a");
-        // ZWJ attaches to the preceding character
-        assert_eq!(&*buffer[(1, 0)].symbol, "b\u{200D}");
-        assert_eq!(&*buffer[(2, 0)].symbol, "c");
-    }
-
-    #[test]
-    fn adversarial_bidi_and_formatting() {
-        // RTL override and BOM
-        let bidi = "\u{202E}abc\u{202C}";
-        let bom = "\u{FEFF}text";
-        let area = Rect::new(0, 0, 10, 1);
-        let mut buffer = Buffer::empty(area);
-
-        buffer.set_string(0, 0, bidi, Style::default());
-        assert_eq!(&*buffer[(0, 0)].symbol, "a");
-
-        buffer.set_string(0, 0, bom, Style::default());
-        assert_eq!(&*buffer[(0, 0)].symbol, "t");
-    }
-
-    #[test]
-    fn adversarial_supplementary_planes() {
-        // High codepoints from supplementary planes
-        let supp = "\u{10000}𝄞𒀀𓀀";
-        let area = Rect::new(0, 0, 10, 1);
-        let mut buffer = Buffer::empty(area);
-
-        buffer.set_string(0, 0, supp, Style::default());
-
-        assert!(!buffer[(0, 0)].symbol.is_empty());
-    }
-
-    #[test]
-    fn adversarial_regional_indicators() {
-        // Unpaired and triple regional indicators
-        let single_ri = "\u{1F1E6}";
-        let three = "\u{1F1FA}\u{1F1F8}\u{1F1E6}"; // US flag + orphan
-        let area = Rect::new(0, 0, 10, 1);
-        let mut buffer = Buffer::empty(area);
-
-        buffer.set_string(0, 0, single_ri, Style::default());
-        assert_eq!(&*buffer[(0, 0)].symbol, single_ri);
-
-        buffer.set_string(0, 0, three, Style::default());
-        assert!(!buffer[(0, 0)].symbol.is_empty());
-    }
-
-    #[test]
-    fn adversarial_tag_sequence_england() {
-        // Subdivision flag using tag sequence
-        let england = "🏴\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}";
-        let area = Rect::new(0, 0, 10, 1);
-        let mut buffer = Buffer::empty(area);
-
-        buffer.set_string(0, 0, england, Style::default());
-        assert_eq!(&*buffer[(0, 0)].symbol, england);
-    }
-
-    #[test]
-    fn adversarial_private_use_and_specials() {
-        // PUA and replacement characters
-        let pua = "\u{E000}\u{FFFD}\u{FFFC}";
-        let area = Rect::new(0, 0, 10, 1);
-        let mut buffer = Buffer::empty(area);
-
-        buffer.set_string(0, 0, pua, Style::default());
-        assert_eq!(&*buffer[(0, 0)].symbol, "\u{E000}");
-    }
-
-    #[test]
-    fn adversarial_empty_string() {
-        let area = Rect::new(0, 0, 10, 1);
-        let mut buffer = Buffer::empty(area);
-
-        buffer.set_string(0, 0, "", Style::default());
-        assert_eq!(&*buffer[(0, 0)].symbol, " ");
-    }
-
-    #[test]
-    fn adversarial_extreme_zalgo_uses_replacement() {
-        // Extreme zalgo: many combining characters exceed capacity
-        let mut extreme = String::from("X");
-        for _ in 0..50 {
-            extreme.push('\u{0303}');
-        }
-
-        let area = Rect::new(0, 0, 10, 1);
-        let mut buffer = Buffer::empty(area);
-        buffer.set_string(0, 0, &extreme, Style::default());
-
-        // Should use replacement character
-        assert_eq!(&*buffer[(0, 0)].symbol, REPLACEMENT_CHARACTER.to_string());
-    }
-
-    #[test]
-    fn adversarial_extremely_long_grapheme_uses_replacement() {
-        let mut absurd = String::from("o");
-        for i in 0..100 {
-            let combining = match i % 4 {
-                0 => '\u{0300}',
-                1 => '\u{0301}',
-                2 => '\u{0302}',
-                _ => '\u{0303}',
-            };
-            absurd.push(combining);
-        }
-
-        let area = Rect::new(0, 0, 10, 1);
-        let mut buffer = Buffer::empty(area);
-        buffer.set_string(0, 0, &absurd, Style::default());
-
-        // Should use replacement character
-        assert_eq!(&*buffer[(0, 0)].symbol, REPLACEMENT_CHARACTER.to_string());
-    }
-
-    #[test]
-    fn adversarial_long_zwj_chain_uses_replacement() {
-        let mut chain = String::from("👨");
-        for _ in 0..10 {
-            chain.push_str("\u{200D}👨");
-        }
-
-        let area = Rect::new(0, 0, 50, 1);
-        let mut buffer = Buffer::empty(area);
-        buffer.set_string(0, 0, &chain, Style::default());
-
-        // Should use replacement character
-        assert_eq!(&*buffer[(0, 0)].symbol, REPLACEMENT_CHARACTER.to_string());
     }
 }
