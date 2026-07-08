@@ -113,6 +113,135 @@ fn update_ime_cache(doc_id: helix_view::DocumentId, view_id: ViewId, mode: Mode,
     });
 }
 
+/// Cache the IME state when the terminal loses focus.
+///
+/// This is called from the `Event::FocusLost` handler. The shell (e.g., zsh)
+/// may automatically close IME when focus is lost, so we cache the current
+/// state so we can restore it when focus is regained.
+///
+/// # Arguments
+/// * `editor` - The editor instance
+/// * `was_enabled` - Current IME state before focus loss
+pub fn cache_ime_state_on_focus_lost(editor: &mut Editor, was_enabled: bool) {
+    let view_id = editor.tree.focus;
+    if !editor.tree.contains(view_id) {
+        return;
+    }
+    let doc_id = editor.tree.get(view_id).doc;
+    let mode = editor.mode();
+
+    // Update the cached state to reflect what the user had set
+    // This way when focus is regained, we know what state to restore
+    update_ime_cache(doc_id, view_id, mode, was_enabled);
+    log::debug!(
+        "Cached IME state on focus lost: enabled={}, doc={}, view={:?}",
+        was_enabled,
+        doc_id,
+        view_id
+    );
+}
+
+/// Restore IME state when the terminal regains focus.
+///
+/// This is called from the `Event::FocusGained` handler. The shell may have
+/// closed IME while focus was elsewhere, so we restore it based on the cached
+/// state, considering the current cursor position's IME sensitivity.
+///
+/// # Arguments
+/// * `editor` - The editor instance
+pub fn handle_focus_gained(editor: &mut Editor) -> Result<()> {
+    let view_id = editor.tree.focus;
+
+    if !editor.tree.contains(view_id) {
+        return Ok(());
+    }
+
+    let doc_id = editor.tree.get(view_id).doc;
+
+    // Get document and ensure view is initialized
+    let doc = match editor.documents.get_mut(&doc_id) {
+        Some(doc) => doc,
+        None => return Ok(()),
+    };
+    doc.ensure_view_init(view_id);
+
+    let cursor_byte_pos = get_cursor_byte_pos(doc, view_id);
+    let doc_version = doc.version();
+
+    // Get syntax tree and loader for region detection
+    let text = doc.text().slice(..);
+    let syntax = doc.syntax();
+    let loader = doc.syntax_loader();
+
+    // Detect IME sensitive region at current cursor position
+    let detection = detect_ime_sensitive_region(syntax, text, &*loader, cursor_byte_pos);
+
+    // Read current system IME state (may have been changed by shell)
+    let current_ime_enabled = read_ime_enabled("focus gained");
+
+    // Update cached cursor position and region, and get the cached IME state.
+    // We use cached_ime_state (which tracks the user's actual intent) rather
+    // than saved_state (which only updates on mode switch) to make the restore
+    // decision. This way, if the user had IME disabled before focus loss and
+    // didn't move the cursor, we won't accidentally enable IME.
+    let cached_ime_state = registry::with_context_mut(doc_id, view_id, Mode::Insert, |ctx| {
+        // Update cached cursor position and region
+        ctx.cached_cursor_byte_pos = Some(cursor_byte_pos);
+        ctx.cached_region_span = detection.node_range.and_then(|(start, end)| {
+            (start < end).then_some(ImeRegionSpan {
+                doc_version,
+                start,
+                end,
+                region: detection.region,
+            })
+        });
+        ctx.cached_ime_state
+    });
+
+    // Determine the final target based on:
+    // 1. Region sensitivity
+    // 2. Cached IME state (user's intent before focus loss)
+    // 3. Current system IME state
+    let final_target = if is_sensitive(detection.region) {
+        // In sensitive regions: restore based on cached_ime_state.
+        // Only restore if cache says it was enabled but system now says disabled
+        // (which happens when shell closes IME during focus loss).
+        match cached_ime_state {
+            Some(true) if !current_ime_enabled => Some(true), // Was enabled, now disabled → restore
+            _ => None,                                       // Otherwise: don't touch IME
+        }
+    } else {
+        // In non-sensitive (code) regions: ensure IME is disabled
+        if current_ime_enabled {
+            Some(false)
+        } else {
+            None
+        }
+    };
+
+    // Execute system API call to restore IME state if needed
+    if let Some(target) = final_target {
+        if let Err(e) = set_ime_enabled(target) {
+            log::error!("Failed to restore IME state on focus gained: {}", e);
+        } else {
+            log::debug!(
+                "IME state restored on focus gained: target={}, region={:?}, cached={:?}",
+                target,
+                detection.region,
+                cached_ime_state
+            );
+        }
+    } else {
+        log::debug!(
+            "IME state unchanged on focus gained: region={:?}, cached={:?}, current={}",
+            detection.region,
+            cached_ime_state,
+            current_ime_enabled
+        );
+    }
+    Ok(())
+}
+
 /// Initialize IME context for a document+view combination.
 ///
 /// This function resets the ImeContext and closes IME if it's currently enabled.
@@ -613,6 +742,10 @@ pub fn register_hooks(_handlers: &crate::handlers::Handlers) {
             }
             Ok(())
         });
+
+        // Note: Terminal-level focus events (Event::FocusGained/Event::FocusLost)
+        // are handled directly in the EditorView to restore IME state when the
+        // shell (e.g. zsh) closes it during panel switching.
     }
 }
 

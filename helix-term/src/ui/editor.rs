@@ -1618,9 +1618,32 @@ impl Component for EditorView {
             Event::IdleTimeout => self.handle_idle_timeout(&mut cx),
             Event::FocusGained => {
                 self.terminal_focused = true;
+
+                // Restore IME state when terminal regains focus
+                // The shell (e.g. zsh) may have closed the IME when focus was lost
+                // We need to restore it if we were in Insert mode with IME enabled
+                if context.editor.mode() == Mode::Insert {
+                    if let Err(e) =
+                        crate::handlers::ime::handle_focus_gained(context.editor)
+                    {
+                        log::error!("Failed to handle focus gained for IME: {}", e);
+                    }
+                }
+
                 EventResult::Consumed(None)
             }
             Event::FocusLost => {
+                // Cache the current IME state before losing focus
+                // so we can restore it when focus is regained
+                if context.editor.mode() == Mode::Insert {
+                    if let Ok(ime_enabled) = is_ime_enabled() {
+                        crate::handlers::ime::cache_ime_state_on_focus_lost(
+                            context.editor,
+                            ime_enabled,
+                        );
+                    }
+                }
+
                 if context.editor.config().auto_save.focus_lost {
                     let options = commands::WriteAllOptions {
                         force: false,
