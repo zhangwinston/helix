@@ -2,7 +2,7 @@
 
 use super::{ImeCapabilities, ImeController, ImeDetector, ImeInfo, ImeType};
 use anyhow::{Context, Result};
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 use std::sync::atomic::{AtomicPtr, Ordering};
 
 #[cfg(windows)]
@@ -25,7 +25,7 @@ const IMC_GETOPENSTATUS: u32 = 0x0005;
 /// The handle is cached on first use and validated before each use.
 /// If the cached handle is invalid, it's refreshed from GetForegroundWindow().
 /// This reduces system calls while ensuring we always use a valid window handle.
-static CACHED_WINDOW: Lazy<AtomicPtr<()>> = Lazy::new(|| AtomicPtr::new(std::ptr::null_mut()));
+static CACHED_WINDOW: LazyLock<AtomicPtr<()>> = LazyLock::new(|| AtomicPtr::new(std::ptr::null_mut()));
 
 /// Windows IME controller using window messages (WM_IME_CONTROL).
 /// This approach is more reliable than using ImmSetOpenStatus directly.

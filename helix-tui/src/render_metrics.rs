@@ -11,7 +11,7 @@
 //! - `width_calls_saved`: Number of symbol.width() calls avoided by caching
 //! - `width_compute_count`: Number of symbol.width() calls actually made
 
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 pub struct RenderMetricsInner {
@@ -42,7 +42,7 @@ impl Default for RenderMetricsInner {
     }
 }
 
-static RENDER_METRICS: Lazy<RenderMetricsInner> = Lazy::new(RenderMetricsInner::default);
+static RENDER_METRICS: LazyLock<RenderMetricsInner> = LazyLock::new(RenderMetricsInner::default);
 
 impl RenderMetricsInner {
     pub fn record_diff(
