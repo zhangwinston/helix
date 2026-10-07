@@ -1,15 +1,21 @@
 //! 演示 IME 平台抽象层功能的示例
 //!
-//! 运行: `cargo run --example ime_platform_demo`
+//! 运行: `cargo run --example ime_platform_demo --features integration`
 
-use helix_term::handlers::ime::platform::{self, ImeDetector, ImeSettings, ImeType};
+#[cfg(any(test, feature = "integration"))]
+use helix_term::handlers::ime::platform::{self, ImeDetector};
+#[cfg(any(test, feature = "integration"))]
 use std::io::{self, Write};
 
+#[cfg(any(test, feature = "integration"))]
 fn main() -> anyhow::Result<()> {
-    // 初始化日志
-    env_logger::Builder::from_default_env()
-        .filter_level(log::LevelFilter::Info)
-        .init();
+    // 初始化日志（级别可通过 HELIX_LOG_LEVEL 覆盖）
+    helix_term::logging::init_stdout(
+        std::env::var("HELIX_LOG_LEVEL")
+            .ok()
+            .and_then(|lvl| lvl.parse().ok())
+            .unwrap_or(log::LevelFilter::Info),
+    );
 
     println!("=== IME 平台抽象层功能演示 ===\n");
 
@@ -37,7 +43,6 @@ fn main() -> anyhow::Result<()> {
             println!("\n4. 优化设置:");
             println!("   重试次数: {}", settings.retry_count);
             println!("   重试延迟: {}ms", settings.retry_delay_ms);
-            println!("   重置阈值: {}", settings.reset_threshold);
             if !settings.custom_settings.is_empty() {
                 println!("   自定义设置:");
                 for (key, value) in &settings.custom_settings {
@@ -114,4 +119,10 @@ fn main() -> anyhow::Result<()> {
 
     println!("\n=== 演示完成 ===");
     Ok(())
+}
+
+#[cfg(not(any(test, feature = "integration")))]
+fn main() {
+    println!("需要使用 --features integration 来运行此演示");
+    println!("请运行: cargo run --example ime_platform_demo --features integration");
 }

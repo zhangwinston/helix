@@ -118,6 +118,10 @@ fn update_ime_cache(doc_id: helix_view::DocumentId, view_id: ViewId, mode: Mode,
 /// This function resets the ImeContext and closes IME if it's currently enabled.
 /// Called when a view is created or a document is opened.
 pub fn initialize_view_ime_state(editor: &mut Editor, view_id: ViewId) {
+    if !editor.config().ime_auto_control {
+        return;
+    }
+
     if !editor.tree.contains(view_id) {
         return;
     }
@@ -196,6 +200,11 @@ fn ime_cursor_snap(ctx: &ImeContext) -> ImeCursorSnap {
 /// - Third lock for cache miss remains separate (needs detection result)
 /// - Fourth lock for engine work remains separate (needs mutable context)
 pub fn handle_cursor_move(editor: &mut Editor, view_id: ViewId) -> Result<()> {
+    // Feature disabled: skip before touching any global state.
+    if !editor.config().ime_auto_control {
+        return Ok(());
+    }
+
     metrics::record_cursor_move_call();
 
     // Only process in Insert mode (FR-002)
@@ -363,6 +372,11 @@ pub fn handle_mode_switch(
     old_mode: Mode,
     new_mode: Mode,
 ) -> Result<()> {
+    // Feature disabled: skip before touching any global state.
+    if !editor.config().ime_auto_control {
+        return Ok(());
+    }
+
     if !editor.tree.contains(view_id) {
         return Ok(());
     }
@@ -589,6 +603,11 @@ pub fn register_hooks(_handlers: &crate::handlers::Handlers) {
         });
 
         register_hook!(move |event: &mut DocumentDidClose<'_>| {
+            // Feature disabled: skip before touching the global registry.
+            if !event.editor.config().ime_auto_control {
+                return Ok(());
+            }
+
             // Remove all IME contexts for the closed document
             registry::remove_document(event.doc.id());
             registry::prune_orphans(event.editor);

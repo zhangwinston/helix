@@ -3,7 +3,7 @@
 //! 运行: `cargo run --example ime_demo --features integration`
 
 #[cfg(any(test, feature = "integration"))]
-use helix_term::handlers::ime::platform::{self, ImeDetector, ImeSettings, ImeType};
+use helix_term::handlers::ime::platform::{self, ImeDetector};
 #[cfg(any(test, feature = "integration"))]
 use std::io::{self, Write};
 
@@ -39,7 +39,6 @@ fn main() -> anyhow::Result<()> {
             println!("\n4. 优化设置:");
             println!("   重试次数: {}", settings.retry_count);
             println!("   重试延迟: {}ms", settings.retry_delay_ms);
-            println!("   重置阈值: {}", settings.reset_threshold);
             if !settings.custom_settings.is_empty() {
                 println!("   自定义设置:");
                 for (key, value) in &settings.custom_settings {

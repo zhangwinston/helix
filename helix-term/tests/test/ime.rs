@@ -12,6 +12,32 @@ use helix_term::{
 };
 use helix_view::{document::Mode, editor::Action};
 use indoc::indoc;
+use parking_lot::{Mutex, MutexGuard};
+use std::sync::LazyLock;
+
+/// IME state lives in process-global singletons (registry, scheduler, metrics)
+/// keyed by `(DocumentId, ViewId)`. Each test builds its own `Editor`, and every
+/// `Editor` starts numbering documents/views from 1, so tests running in
+/// parallel would read and overwrite each other's IME contexts (e.g. one test's
+/// `Some(Code)` region showing up in another's `assert_eq!(region, None)`).
+/// These tests assert on that global state, so they must not overlap.
+///
+/// The lock guard must be held across `.await`s and `parking_lot`'s guard is
+/// `Send` (unlike `std::sync`'s), which the `#[tokio::test]` futures require.
+static IME_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+fn ime_test_lock() -> MutexGuard<'static, ()> {
+    IME_TEST_LOCK.lock()
+}
+
+/// Test config with IME auto-control re-enabled: `test_config()` disables it
+/// (see `test_editor_config`) because the IME globals are process-wide, but
+/// these tests exercise exactly that machinery.
+fn ime_test_config() -> helix_term::config::Config {
+    let mut config = test_config();
+    config.editor.ime_auto_control = true;
+    config
+}
 
 // Access test-only function from registry
 // Note: context() requires both doc_id and view_id now
@@ -69,9 +95,10 @@ fn set_cursor(doc: &mut helix_view::Document, view_id: helix_view::ViewId, posit
 /// a default ImeContext with saved_state=None and current_region=None.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_ime_context_initialized_on_view_creation() -> anyhow::Result<()> {
+    let _ime_guard = ime_test_lock();
     let app = Application::new(
         Args::default(),
-        test_config(),
+        ime_test_config(),
         test_syntax_loader(None),
         WorkspaceTrust::fully_trusted(),
     )?;
@@ -107,9 +134,10 @@ async fn test_ime_context_initialized_on_view_creation() -> anyhow::Result<()> {
 /// This test verifies that DocumentDidOpen event triggers initialize_view_ime_state.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_ime_context_reset_on_document_open() -> anyhow::Result<()> {
+    let _ime_guard = ime_test_lock();
     let mut app = Application::new(
         Args::default(),
-        test_config(),
+        ime_test_config(),
         test_syntax_loader(None),
         WorkspaceTrust::fully_trusted(),
     )?;
@@ -153,10 +181,11 @@ async fn test_ime_context_reset_on_document_open() -> anyhow::Result<()> {
 /// as platform-specific IME APIs may not be available in test environment.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_ime_auto_closed_on_view_init_when_system_ime_enabled() -> anyhow::Result<()> {
+    let _ime_guard = ime_test_lock();
     // Create a new application (this triggers view initialization)
     let app = Application::new(
         Args::default(),
-        test_config(),
+        ime_test_config(),
         test_syntax_loader(None),
         WorkspaceTrust::fully_trusted(),
     )?;
@@ -195,10 +224,11 @@ async fn test_ime_auto_closed_on_view_init_when_system_ime_enabled() -> anyhow::
 /// the IME state remains closed and context is properly initialized.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_ime_stays_closed_on_view_init_when_system_ime_disabled() -> anyhow::Result<()> {
+    let _ime_guard = ime_test_lock();
     // Create a new application (this triggers view initialization)
     let app = Application::new(
         Args::default(),
-        test_config(),
+        ime_test_config(),
         test_syntax_loader(None),
         WorkspaceTrust::fully_trusted(),
     )?;
@@ -234,9 +264,10 @@ async fn test_ime_stays_closed_on_view_init_when_system_ime_disabled() -> anyhow
 /// This test verifies FR-017: each view independently maintains IME state.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_ime_context_independence_per_view() -> anyhow::Result<()> {
+    let _ime_guard = ime_test_lock();
     let mut app = Application::new(
         Args::default(),
-        test_config(),
+        ime_test_config(),
         test_syntax_loader(None),
         WorkspaceTrust::fully_trusted(),
     )?;
@@ -290,9 +321,10 @@ async fn test_ime_context_independence_per_view() -> anyhow::Result<()> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_cursor_move_uses_primary_selection_in_multi_cursor() -> anyhow::Result<()> {
+    let _ime_guard = ime_test_lock();
     let mut app = Application::new(
         Args::default(),
-        test_config(),
+        ime_test_config(),
         test_syntax_loader(None),
         WorkspaceTrust::fully_trusted(),
     )?;
@@ -334,9 +366,10 @@ async fn test_cursor_move_uses_primary_selection_in_multi_cursor() -> anyhow::Re
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_cursor_move_entire_file_when_syntax_loading() -> anyhow::Result<()> {
+    let _ime_guard = ime_test_lock();
     let mut app = Application::new(
         Args::default(),
-        test_config(),
+        ime_test_config(),
         test_syntax_loader(None),
         WorkspaceTrust::fully_trusted(),
     )?;
@@ -370,11 +403,12 @@ async fn test_cursor_move_entire_file_when_syntax_loading() -> anyhow::Result<()
 /// that IME region detection returns EntireFile.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_ime_enabled_in_unparseable_file_anywhere() -> anyhow::Result<()> {
+    let _ime_guard = ime_test_lock();
     use helix_core::syntax::detect_ime_sensitive_region;
 
     let app = Application::new(
         Args::default(),
-        test_config(),
+        ime_test_config(),
         test_syntax_loader(None),
         WorkspaceTrust::fully_trusted(),
     )?;
@@ -417,11 +451,12 @@ async fn test_ime_enabled_in_unparseable_file_anywhere() -> anyhow::Result<()> {
 /// a file with invalid syntax that cannot be parsed.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_ime_enabled_in_syntax_error_file_anywhere() -> anyhow::Result<()> {
+    let _ime_guard = ime_test_lock();
     use helix_core::syntax::detect_ime_sensitive_region;
 
     let app = Application::new(
         Args::default(),
-        test_config(),
+        ime_test_config(),
         test_syntax_loader(None),
         WorkspaceTrust::fully_trusted(),
     )?;
@@ -463,11 +498,12 @@ async fn test_ime_enabled_in_syntax_error_file_anywhere() -> anyhow::Result<()> 
 /// including files with no language assigned, invalid syntax, etc.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_ime_region_detection_syntax_error_scenarios() -> anyhow::Result<()> {
+    let _ime_guard = ime_test_lock();
     use helix_core::syntax::detect_ime_sensitive_region;
 
     let app = Application::new(
         Args::default(),
-        test_config(),
+        ime_test_config(),
         test_syntax_loader(None),
         WorkspaceTrust::fully_trusted(),
     )?;
@@ -510,11 +546,12 @@ async fn test_ime_region_detection_syntax_error_scenarios() -> anyhow::Result<()
 /// @string captures in highlights.scm, and verify that EntireFile is returned.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_ime_enabled_in_file_without_string_comment_types() -> anyhow::Result<()> {
+    let _ime_guard = ime_test_lock();
     use helix_core::syntax::detect_ime_sensitive_region;
 
     let app = Application::new(
         Args::default(),
-        test_config(),
+        ime_test_config(),
         test_syntax_loader(None),
         WorkspaceTrust::fully_trusted(),
     )?;
@@ -584,11 +621,12 @@ async fn test_ime_enabled_in_file_without_string_comment_types() -> anyhow::Resu
 /// identifies languages that don't support these types.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_ime_region_detection_language_without_string_comment() -> anyhow::Result<()> {
+    let _ime_guard = ime_test_lock();
     use helix_core::syntax::detect_ime_sensitive_region;
 
     let app = Application::new(
         Args::default(),
-        test_config(),
+        ime_test_config(),
         test_syntax_loader(None),
         WorkspaceTrust::fully_trusted(),
     )?;
@@ -640,9 +678,10 @@ async fn test_ime_region_detection_language_without_string_comment() -> anyhow::
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_cursor_move_region_detection_cache() -> anyhow::Result<()> {
+    let _ime_guard = ime_test_lock();
     let mut app = Application::new(
         Args::default(),
-        test_config(),
+        ime_test_config(),
         test_syntax_loader(None),
         WorkspaceTrust::fully_trusted(),
     )?;
@@ -669,9 +708,10 @@ async fn test_cursor_move_region_detection_cache() -> anyhow::Result<()> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_cursor_move_skips_when_not_insert_mode() -> anyhow::Result<()> {
+    let _ime_guard = ime_test_lock();
     let mut app = Application::new(
         Args::default(),
-        test_config(),
+        ime_test_config(),
         test_syntax_loader(None),
         WorkspaceTrust::fully_trusted(),
     )?;
@@ -696,9 +736,10 @@ async fn test_cursor_move_skips_when_not_insert_mode() -> anyhow::Result<()> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_cursor_move_latency_within_budget() -> anyhow::Result<()> {
+    let _ime_guard = ime_test_lock();
     let mut app = Application::new(
         Args::default(),
-        test_config(),
+        ime_test_config(),
         test_syntax_loader(None),
         WorkspaceTrust::fully_trusted(),
     )?;
@@ -789,9 +830,10 @@ third line"#;
 #[cfg(not(target_os = "windows"))]
 #[tokio::test(flavor = "multi_thread")]
 async fn test_cursor_move_robust_under_rapid_changes() -> anyhow::Result<()> {
+    let _ime_guard = ime_test_lock();
     let mut app = Application::new(
         Args::default(),
-        test_config(),
+        ime_test_config(),
         test_syntax_loader(None),
         WorkspaceTrust::fully_trusted(),
     )?;

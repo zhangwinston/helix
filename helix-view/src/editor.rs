@@ -340,6 +340,9 @@ pub struct Config {
     /// Configures completion of words from open buffers.
     /// Defaults to enabled with a trigger length of 7.
     pub word_completion: WordCompletion,
+    /// Automatically enable the system IME in string/comment regions and
+    /// disable it in code regions while in insert mode. Defaults to `true`.
+    pub ime_auto_control: bool,
     /// Automatic formatting on save. Defaults to true.
     pub auto_format: bool,
     /// Default register used for yank/paste. Defaults to '"'
@@ -1205,6 +1208,7 @@ impl Default for Config {
             auto_completion: true,
             path_completion: true,
             word_completion: WordCompletion::default(),
+            ime_auto_control: true,
             auto_format: true,
             default_yank_register: '"',
             auto_save: AutoSave::default(),

@@ -200,3 +200,9 @@ pub fn get_ime_info() -> Result<ImeInfo> {
 pub fn initialize() -> Result<()> {
     PlatformImeController::initialize()
 }
+
+/// Check whether an IME is available and functional.
+#[allow(dead_code)]
+pub fn is_ime_available() -> bool {
+    PlatformImeController::is_ime_available()
+}
