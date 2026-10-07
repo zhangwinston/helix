@@ -4,6 +4,7 @@ use helix_core::{
     syntax::{detect_ime_sensitive_region, ImeSensitiveRegion, Syntax},
     Range, Rope, Selection, Transaction,
 };
+use helix_loader::workspace_trust::WorkspaceTrust;
 use helix_term::{
     application::Application,
     args::Args,
@@ -68,7 +69,12 @@ fn set_cursor(doc: &mut helix_view::Document, view_id: helix_view::ViewId, posit
 /// a default ImeContext with saved_state=None and current_region=None.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_ime_context_initialized_on_view_creation() -> anyhow::Result<()> {
-    let app = Application::new(Args::default(), test_config(), test_syntax_loader(None))?;
+    let app = Application::new(
+        Args::default(),
+        test_config(),
+        test_syntax_loader(None),
+        WorkspaceTrust::fully_trusted(),
+    )?;
     let view_id = app.editor.tree.focus;
     let doc_id = app.editor.tree.get(view_id).doc;
 
@@ -101,7 +107,12 @@ async fn test_ime_context_initialized_on_view_creation() -> anyhow::Result<()> {
 /// This test verifies that DocumentDidOpen event triggers initialize_view_ime_state.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_ime_context_reset_on_document_open() -> anyhow::Result<()> {
-    let mut app = Application::new(Args::default(), test_config(), test_syntax_loader(None))?;
+    let mut app = Application::new(
+        Args::default(),
+        test_config(),
+        test_syntax_loader(None),
+        WorkspaceTrust::fully_trusted(),
+    )?;
     let view_id = app.editor.tree.focus;
     let doc_id = app.editor.tree.get(view_id).doc;
 
@@ -143,7 +154,12 @@ async fn test_ime_context_reset_on_document_open() -> anyhow::Result<()> {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_ime_auto_closed_on_view_init_when_system_ime_enabled() -> anyhow::Result<()> {
     // Create a new application (this triggers view initialization)
-    let app = Application::new(Args::default(), test_config(), test_syntax_loader(None))?;
+    let app = Application::new(
+        Args::default(),
+        test_config(),
+        test_syntax_loader(None),
+        WorkspaceTrust::fully_trusted(),
+    )?;
     let view_id = app.editor.tree.focus;
     let doc_id = app.editor.tree.get(view_id).doc;
 
@@ -180,7 +196,12 @@ async fn test_ime_auto_closed_on_view_init_when_system_ime_enabled() -> anyhow::
 #[tokio::test(flavor = "multi_thread")]
 async fn test_ime_stays_closed_on_view_init_when_system_ime_disabled() -> anyhow::Result<()> {
     // Create a new application (this triggers view initialization)
-    let app = Application::new(Args::default(), test_config(), test_syntax_loader(None))?;
+    let app = Application::new(
+        Args::default(),
+        test_config(),
+        test_syntax_loader(None),
+        WorkspaceTrust::fully_trusted(),
+    )?;
     let view_id = app.editor.tree.focus;
     let doc_id = app.editor.tree.get(view_id).doc;
 
@@ -213,7 +234,12 @@ async fn test_ime_stays_closed_on_view_init_when_system_ime_disabled() -> anyhow
 /// This test verifies FR-017: each view independently maintains IME state.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_ime_context_independence_per_view() -> anyhow::Result<()> {
-    let mut app = Application::new(Args::default(), test_config(), test_syntax_loader(None))?;
+    let mut app = Application::new(
+        Args::default(),
+        test_config(),
+        test_syntax_loader(None),
+        WorkspaceTrust::fully_trusted(),
+    )?;
     let view1_id = app.editor.tree.focus;
     let doc1_id = app.editor.tree.get(view1_id).doc;
 
@@ -264,7 +290,12 @@ async fn test_ime_context_independence_per_view() -> anyhow::Result<()> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_cursor_move_uses_primary_selection_in_multi_cursor() -> anyhow::Result<()> {
-    let mut app = Application::new(Args::default(), test_config(), test_syntax_loader(None))?;
+    let mut app = Application::new(
+        Args::default(),
+        test_config(),
+        test_syntax_loader(None),
+        WorkspaceTrust::fully_trusted(),
+    )?;
     let view_id = app.editor.tree.focus;
     let doc_id = overwrite_document_text(
         &mut app,
@@ -303,7 +334,12 @@ async fn test_cursor_move_uses_primary_selection_in_multi_cursor() -> anyhow::Re
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_cursor_move_entire_file_when_syntax_loading() -> anyhow::Result<()> {
-    let mut app = Application::new(Args::default(), test_config(), test_syntax_loader(None))?;
+    let mut app = Application::new(
+        Args::default(),
+        test_config(),
+        test_syntax_loader(None),
+        WorkspaceTrust::fully_trusted(),
+    )?;
     let view_id = app.editor.tree.focus;
     let doc_id = app.editor.tree.get(view_id).doc;
 
@@ -336,7 +372,12 @@ async fn test_cursor_move_entire_file_when_syntax_loading() -> anyhow::Result<()
 async fn test_ime_enabled_in_unparseable_file_anywhere() -> anyhow::Result<()> {
     use helix_core::syntax::detect_ime_sensitive_region;
 
-    let app = Application::new(Args::default(), test_config(), test_syntax_loader(None))?;
+    let app = Application::new(
+        Args::default(),
+        test_config(),
+        test_syntax_loader(None),
+        WorkspaceTrust::fully_trusted(),
+    )?;
     let view_id = app.editor.tree.focus;
     let doc_id = app.editor.tree.get(view_id).doc;
     let doc = app.editor.documents.get(&doc_id).unwrap();
@@ -378,7 +419,12 @@ async fn test_ime_enabled_in_unparseable_file_anywhere() -> anyhow::Result<()> {
 async fn test_ime_enabled_in_syntax_error_file_anywhere() -> anyhow::Result<()> {
     use helix_core::syntax::detect_ime_sensitive_region;
 
-    let app = Application::new(Args::default(), test_config(), test_syntax_loader(None))?;
+    let app = Application::new(
+        Args::default(),
+        test_config(),
+        test_syntax_loader(None),
+        WorkspaceTrust::fully_trusted(),
+    )?;
     let view_id = app.editor.tree.focus;
     let doc_id = app.editor.tree.get(view_id).doc;
     let doc = app.editor.documents.get(&doc_id).unwrap();
@@ -419,7 +465,12 @@ async fn test_ime_enabled_in_syntax_error_file_anywhere() -> anyhow::Result<()> 
 async fn test_ime_region_detection_syntax_error_scenarios() -> anyhow::Result<()> {
     use helix_core::syntax::detect_ime_sensitive_region;
 
-    let app = Application::new(Args::default(), test_config(), test_syntax_loader(None))?;
+    let app = Application::new(
+        Args::default(),
+        test_config(),
+        test_syntax_loader(None),
+        WorkspaceTrust::fully_trusted(),
+    )?;
     let view_id = app.editor.tree.focus;
     let doc_id = app.editor.tree.get(view_id).doc;
     let doc = app.editor.documents.get(&doc_id).unwrap();
@@ -461,7 +512,12 @@ async fn test_ime_region_detection_syntax_error_scenarios() -> anyhow::Result<()
 async fn test_ime_enabled_in_file_without_string_comment_types() -> anyhow::Result<()> {
     use helix_core::syntax::detect_ime_sensitive_region;
 
-    let app = Application::new(Args::default(), test_config(), test_syntax_loader(None))?;
+    let app = Application::new(
+        Args::default(),
+        test_config(),
+        test_syntax_loader(None),
+        WorkspaceTrust::fully_trusted(),
+    )?;
     let view_id = app.editor.tree.focus;
     let doc_id = app.editor.tree.get(view_id).doc;
     let doc = app.editor.documents.get(&doc_id).unwrap();
@@ -530,7 +586,12 @@ async fn test_ime_enabled_in_file_without_string_comment_types() -> anyhow::Resu
 async fn test_ime_region_detection_language_without_string_comment() -> anyhow::Result<()> {
     use helix_core::syntax::detect_ime_sensitive_region;
 
-    let app = Application::new(Args::default(), test_config(), test_syntax_loader(None))?;
+    let app = Application::new(
+        Args::default(),
+        test_config(),
+        test_syntax_loader(None),
+        WorkspaceTrust::fully_trusted(),
+    )?;
     let view_id = app.editor.tree.focus;
     let doc_id = app.editor.tree.get(view_id).doc;
     let doc = app.editor.documents.get(&doc_id).unwrap();
@@ -579,7 +640,12 @@ async fn test_ime_region_detection_language_without_string_comment() -> anyhow::
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_cursor_move_region_detection_cache() -> anyhow::Result<()> {
-    let mut app = Application::new(Args::default(), test_config(), test_syntax_loader(None))?;
+    let mut app = Application::new(
+        Args::default(),
+        test_config(),
+        test_syntax_loader(None),
+        WorkspaceTrust::fully_trusted(),
+    )?;
     // Allow background initialization (SelectionDidChange hooks) to complete
     tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
     metrics::reset();
@@ -603,7 +669,12 @@ async fn test_cursor_move_region_detection_cache() -> anyhow::Result<()> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_cursor_move_skips_when_not_insert_mode() -> anyhow::Result<()> {
-    let mut app = Application::new(Args::default(), test_config(), test_syntax_loader(None))?;
+    let mut app = Application::new(
+        Args::default(),
+        test_config(),
+        test_syntax_loader(None),
+        WorkspaceTrust::fully_trusted(),
+    )?;
     tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
     metrics::reset();
     let view_id = app.editor.tree.focus;
@@ -625,7 +696,12 @@ async fn test_cursor_move_skips_when_not_insert_mode() -> anyhow::Result<()> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_cursor_move_latency_within_budget() -> anyhow::Result<()> {
-    let mut app = Application::new(Args::default(), test_config(), test_syntax_loader(None))?;
+    let mut app = Application::new(
+        Args::default(),
+        test_config(),
+        test_syntax_loader(None),
+        WorkspaceTrust::fully_trusted(),
+    )?;
     tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
     metrics::reset();
     let view_id = app.editor.tree.focus;
@@ -674,7 +750,8 @@ third line"#;
                comment body */
         }
     "##});
-    let syntax = Syntax::new(source.slice(..), language, &loader)?;
+    let syntax =
+        Syntax::new(source.slice(..), language, &loader).map_err(|e| anyhow::anyhow!("{e}"))?;
     let text = source.slice(..);
     let rope_string = source.to_string();
 
@@ -712,7 +789,12 @@ third line"#;
 #[cfg(not(target_os = "windows"))]
 #[tokio::test(flavor = "multi_thread")]
 async fn test_cursor_move_robust_under_rapid_changes() -> anyhow::Result<()> {
-    let mut app = Application::new(Args::default(), test_config(), test_syntax_loader(None))?;
+    let mut app = Application::new(
+        Args::default(),
+        test_config(),
+        test_syntax_loader(None),
+        WorkspaceTrust::fully_trusted(),
+    )?;
     let view_id = app.editor.tree.focus;
     let doc_id = overwrite_document_text(
         &mut app,

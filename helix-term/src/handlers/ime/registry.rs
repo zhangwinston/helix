@@ -4,8 +4,8 @@ use std::{
 };
 
 use helix_view::{document::Mode, editor::Editor, DocumentId, ViewId};
-use std::sync::LazyLock;
 use parking_lot::Mutex;
+use std::sync::LazyLock;
 
 use super::engine::ImeContext;
 use anyhow::Result;
@@ -17,7 +17,8 @@ use anyhow::Result;
 /// - Lock is held for minimal time (only for HashMap lookups/updates)
 /// - IME state updates are infrequent (only on cursor move and mode switch)
 /// - Contexts are small (Copy types), so operations are fast
-static REGISTRY: LazyLock<Mutex<ImeRegistry>> = LazyLock::new(|| Mutex::new(ImeRegistry::default()));
+static REGISTRY: LazyLock<Mutex<ImeRegistry>> =
+    LazyLock::new(|| Mutex::new(ImeRegistry::default()));
 
 #[derive(Default)]
 struct ImeRegistry {

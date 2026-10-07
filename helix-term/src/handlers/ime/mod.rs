@@ -480,7 +480,8 @@ pub fn handle_mode_switch(
                 if detection.region == ImeSensitiveRegion::EntireFile {
                     read_ime_enabled("mode switch (entire file)")
                 } else {
-                    ctx.cached_ime_state.unwrap_or_else(|| read_ime_enabled("mode switch"))
+                    ctx.cached_ime_state
+                        .unwrap_or_else(|| read_ime_enabled("mode switch"))
                 }
             };
 
@@ -510,7 +511,8 @@ pub fn handle_mode_switch(
                 update_ime_cache(doc_id, view_id, new_mode, target);
             }
         } else {
-            let saved = registry::with_context_mut(doc_id, view_id, new_mode, |ctx| ctx.saved_state);
+            let saved =
+                registry::with_context_mut(doc_id, view_id, new_mode, |ctx| ctx.saved_state);
             log::trace!(
                 "IME: mode switch entering insert, no action (saved_state={:?})",
                 saved

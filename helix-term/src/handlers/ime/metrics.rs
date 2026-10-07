@@ -1,5 +1,5 @@
-use std::sync::LazyLock;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::LazyLock;
 use std::time::Duration;
 
 #[derive(Default, Debug, Clone, Copy)]

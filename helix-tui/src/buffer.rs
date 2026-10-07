@@ -764,7 +764,7 @@ impl Buffer {
             // and make the following text appear shifted (e.g. " clau" instead of "claud"). When we
             // need to clear that cell (e.g. popup closed), we do it from the leading cell via
             // emit_trailing_first + at_leading_trailing_changed instead.
-            let skip_trailing_blank = to_skip > 0 && current.symbol == " ";
+            let skip_trailing_blank = to_skip > 0 && &*current.symbol == " ";
             // Require i+1 in bounds for both buffers (they share the same area in practice).
             let trailing_changed = i + 1 < next_buffer.len()
                 && i + 1 < previous_buffer.len()
@@ -778,7 +778,7 @@ impl Buffer {
                 && current_width > 1
                 && trailing_changed
                 && i + 1 < next_buffer.len()
-                && next_buffer[i + 1].symbol == " ";
+                && &*next_buffer[i + 1].symbol == " ";
             let should_emit_leading = ((current != previous || invalidated > 0)
                 && !skip_trailing_blank)
                 || at_leading_trailing_changed;
@@ -788,7 +788,8 @@ impl Buffer {
                 // Emit trailing cell before leading when trailing is blank, so terminals that
                 // don't clear the second cell (e.g. Windows conhost) get it cleared first. Do this
                 // when we're adding the leading or when only the trailing changed (e.g. popup closed).
-                let trailing_blank = i + 1 < next_buffer.len() && next_buffer[i + 1].symbol == " ";
+                let trailing_blank =
+                    i + 1 < next_buffer.len() && &*next_buffer[i + 1].symbol == " ";
                 let emit_trailing_first = current_width > 1
                     && i + current_width <= next_buffer.len()
                     && trailing_blank
@@ -819,10 +820,7 @@ impl Buffer {
             use crate::render_metrics::record_diff;
             let cells_traversed = next_buffer.len();
             let cells_updated = updates.len();
-            let wide_chars = updates
-                .iter()
-                .filter(|(_, _, cell)| cell.width > 1)
-                .count();
+            let wide_chars = updates.iter().filter(|(_, _, cell)| cell.width > 1).count();
             // width_compute_count = 0 because cell.width cache eliminates all width() calls in diff
             record_diff(cells_traversed, cells_updated, wide_chars, 0);
         }

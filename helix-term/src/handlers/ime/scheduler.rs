@@ -11,7 +11,8 @@ use super::handle_cursor_move;
 
 const CURSOR_MOVE_BUFFER: Duration = Duration::from_millis(50);
 
-static PENDING_VIEWS: LazyLock<DashMap<ViewId, Arc<PendingState>>> = LazyLock::new(DashMap::default);
+static PENDING_VIEWS: LazyLock<DashMap<ViewId, Arc<PendingState>>> =
+    LazyLock::new(DashMap::default);
 
 struct PendingState {
     sequence: AtomicU64,

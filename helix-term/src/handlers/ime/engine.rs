@@ -88,9 +88,7 @@ impl<'ctx> ImeEngine<'ctx> {
             }
             // No saved state: don't enable IME automatically
             // The user needs to manually enable IME first, then it will be restored
-            log::trace!(
-                "IME engine: moving to sensitive region, no saved state, not enabling IME"
-            );
+            log::trace!("IME engine: moving to sensitive region, no saved state, not enabling IME");
             return None;
         }
 

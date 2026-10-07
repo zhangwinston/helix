@@ -52,7 +52,7 @@ impl LinuxImeController {
             let status = String::from_utf8_lossy(&output.stdout);
             match status.trim() {
                 "0" => Ok("Closed".to_string()),
-                "1" => Ok("Inactive".to_string()),  // 1 = inactive (IME not active)
+                "1" => Ok("Inactive".to_string()), // 1 = inactive (IME not active)
                 "2" => Ok("Active".to_string()),   // 2 = active (IME ready)
                 _ => Ok("Unknown".to_string()),
             }
@@ -74,10 +74,13 @@ impl LinuxImeController {
         if output.status.success() {
             let status = String::from_utf8_lossy(&output.stdout);
             match status.trim() {
-                "0" => Ok(false),  // Closed
-                "1" => Ok(false),  // Inactive - fcitx running but IME not activated
-                "2" => Ok(true),   // Active - IME is enabled
-                _ => Err(anyhow::anyhow!("Unexpected fcitx-remote output: {}", status)),
+                "0" => Ok(false), // Closed
+                "1" => Ok(false), // Inactive - fcitx running but IME not activated
+                "2" => Ok(true),  // Active - IME is enabled
+                _ => Err(anyhow::anyhow!(
+                    "Unexpected fcitx-remote output: {}",
+                    status
+                )),
             }
         } else {
             Err(anyhow::anyhow!("fcitx-remote failed (fcitx not running?)"))
