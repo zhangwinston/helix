@@ -212,10 +212,22 @@ impl ImeController for LinuxImeController {
             }
         } else if Self::is_fcitx_running() {
             match *FCITX_REMOTE {
-                Some(remote) => log::info!("FCITX daemon detected (using {remote})"),
+                Some(remote) => {
+                    log::info!("FCITX daemon detected (using {remote})");
+                    // Self-check: a daemon without a working remote means IME
+                    // auto-control would silently do nothing — say so loudly
+                    // instead of failing per keypress later.
+                    if let Err(e) = Self::query_fcitx_status() {
+                        log::warn!(
+                            "FCITX daemon detected but not controllable via {remote}: {e}; \
+                             IME auto-control will be ineffective until this is fixed"
+                        );
+                    }
+                }
                 None => log::warn!(
                     "FCITX daemon detected but no remote helper found \
-                     (install fcitx5-remote or fcitx-remote for IME state control)"
+                     (install fcitx5-remote or fcitx-remote for IME state control); \
+                     IME auto-control will be ineffective"
                 ),
             }
         } else {

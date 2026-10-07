@@ -325,7 +325,13 @@ pub fn handle_cursor_move(editor: &mut Editor, view_id: ViewId) -> Result<()> {
         && is_new_region_sensitive
         && region_unchanged;
 
-    let current_ime_enabled = if should_verify_cache {
+    // Leaving a sensitive region: the state is about to be saved for later
+    // restore, so it must be read fresh — the user may have toggled the IME
+    // manually while inside the sensitive region, and restoring a stale
+    // cached value would lose that (only *staying* inside a sensitive region
+    // used to trigger a fresh read).
+    let leaving_sensitive = is_sensitive_region && !is_new_region_sensitive;
+    let current_ime_enabled = if should_verify_cache || leaving_sensitive {
         // Region unchanged in sensitive area: verify cache by querying system
         read_ime_enabled("cursor move (cache verification)")
     } else {

@@ -183,26 +183,136 @@ pub use fallback::FallbackImeController as PlatformImeController;
 
 /// Convenience function to query IME enabled state using platform-specific implementation.
 pub fn is_ime_enabled() -> Result<bool> {
+    #[cfg(any(test, feature = "integration"))]
+    if let Some(fake) = testing::active_platform() {
+        return fake.is_ime_enabled();
+    }
     PlatformImeController::is_ime_enabled()
 }
 
 /// Convenience function to set IME enabled state using platform-specific implementation.
 pub fn set_ime_enabled(enabled: bool) -> Result<()> {
+    #[cfg(any(test, feature = "integration"))]
+    if let Some(fake) = testing::active_platform() {
+        return fake.set_ime_enabled(enabled);
+    }
     PlatformImeController::set_ime_enabled(enabled)
 }
 
 /// Get information about the current IME
 pub fn get_ime_info() -> Result<ImeInfo> {
+    #[cfg(any(test, feature = "integration"))]
+    if let Some(fake) = testing::active_platform() {
+        return fake.get_ime_info();
+    }
     PlatformImeController::get_ime_info()
 }
 
 /// Initialize platform-specific IME support
 pub fn initialize() -> Result<()> {
+    #[cfg(any(test, feature = "integration"))]
+    if let Some(fake) = testing::active_platform() {
+        return fake.initialize();
+    }
     PlatformImeController::initialize()
 }
 
 /// Check whether an IME is available and functional.
 #[allow(dead_code)]
 pub fn is_ime_available() -> bool {
+    #[cfg(any(test, feature = "integration"))]
+    if let Some(fake) = testing::active_platform() {
+        return fake.is_ime_available();
+    }
     PlatformImeController::is_ime_available()
+}
+
+/// Test double for the OS IME controller.
+///
+/// The engine talks to the OS exclusively through the free functions above, so
+/// installing a fake here makes every IME test hermetic: no test toggles the
+/// developer's real input method, and success/failure/unavailable platform
+/// behavior becomes assertable (which is how the fcitx5-remote breakage went
+/// unnoticed — real control failures were indistinguishable from successes
+/// under the old tests).
+#[cfg(any(test, feature = "integration"))]
+pub mod testing {
+    use super::{ImeCapabilities, ImeInfo};
+    use anyhow::Result;
+    use std::sync::{
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        Arc, LazyLock, RwLock,
+    };
+
+    /// Scriptable fake platform. Share one instance with the test to observe
+    /// and drive it while the engine holds its own handle.
+    #[derive(Debug, Default)]
+    pub struct FakeImePlatform {
+        /// Whether `is_ime_available` reports an IME at all.
+        pub available: AtomicBool,
+        /// Current enabled state, flipped by `set_ime_enabled`.
+        pub enabled: AtomicBool,
+        /// Make every `is_ime_enabled` call return an error (FR-019 path).
+        pub query_fails: AtomicBool,
+        /// Make every `set_ime_enabled` call return an error (FR-019 path).
+        pub control_fails: AtomicBool,
+        pub query_calls: AtomicU64,
+        pub set_calls: AtomicU64,
+    }
+
+    impl FakeImePlatform {
+        pub fn available_and(enabled: bool) -> Arc<Self> {
+            let fake = Arc::new(Self::default());
+            fake.available.store(true, Ordering::Release);
+            fake.enabled.store(enabled, Ordering::Release);
+            fake
+        }
+
+        pub(crate) fn is_ime_enabled(&self) -> Result<bool> {
+            self.query_calls.fetch_add(1, Ordering::Relaxed);
+            if self.query_fails.load(Ordering::Acquire) {
+                return Err(anyhow::anyhow!("fake: query failed"));
+            }
+            Ok(self.enabled.load(Ordering::Acquire))
+        }
+
+        pub(crate) fn set_ime_enabled(&self, enabled: bool) -> Result<()> {
+            self.set_calls.fetch_add(1, Ordering::Relaxed);
+            if self.control_fails.load(Ordering::Acquire) {
+                return Err(anyhow::anyhow!("fake: control failed"));
+            }
+            self.enabled.store(enabled, Ordering::Release);
+            Ok(())
+        }
+
+        pub(crate) fn get_ime_info(&self) -> Result<ImeInfo> {
+            Ok(ImeInfo {
+                name: "Fake IME".to_string(),
+                version: None,
+                capabilities: ImeCapabilities::WithState,
+            })
+        }
+
+        pub(crate) fn initialize(&self) -> Result<()> {
+            Ok(())
+        }
+
+        pub(crate) fn is_ime_available(&self) -> bool {
+            self.available.load(Ordering::Acquire)
+        }
+    }
+
+    static OVERRIDE: LazyLock<RwLock<Option<Arc<FakeImePlatform>>>> =
+        LazyLock::new(|| RwLock::new(None));
+
+    /// Install `fake` as the platform backend; `None` restores the real OS
+    /// controller. Tests install while holding the IME test lock and restore
+    /// on drop, so the override never leaks across tests.
+    pub fn install_platform(fake: Option<Arc<FakeImePlatform>>) {
+        *OVERRIDE.write().unwrap() = fake;
+    }
+
+    pub(crate) fn active_platform() -> Option<Arc<FakeImePlatform>> {
+        OVERRIDE.read().unwrap().clone()
+    }
 }

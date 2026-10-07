@@ -18,7 +18,8 @@ use helix_term::{
 use helix_view::{document::Mode, editor::Action};
 use indoc::indoc;
 use parking_lot::{Mutex, MutexGuard};
-use std::sync::LazyLock;
+use std::sync::atomic::Ordering;
+use std::sync::{Arc, LazyLock};
 
 /// IME state lives in process-global singletons (registry, scheduler, metrics)
 /// keyed by `(DocumentId, ViewId)`. Each test builds its own `Editor`, and every
@@ -33,6 +34,36 @@ static IME_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 fn ime_test_lock() -> MutexGuard<'static, ()> {
     IME_TEST_LOCK.lock()
+}
+
+use helix_term::handlers::ime::platform::testing::{install_platform, FakeImePlatform};
+
+/// Holds the IME test lock for the test's duration and keeps a hermetic fake
+/// platform installed, restoring the real OS controller on drop. Without this,
+/// tests on a desktop with a live fcitx/ibus would toggle the developer's real
+/// input method, and outcomes would depend on each machine's IME setup.
+struct ImeTestEnv {
+    _guard: MutexGuard<'static, ()>,
+}
+
+impl Drop for ImeTestEnv {
+    fn drop(&mut self) {
+        install_platform(None);
+    }
+}
+
+fn ime_test_env_with(fake: Arc<FakeImePlatform>) -> ImeTestEnv {
+    let env = ImeTestEnv {
+        _guard: IME_TEST_LOCK.lock(),
+    };
+    install_platform(Some(fake));
+    env
+}
+
+/// Locks the tests and installs the default fake: an available IME, currently
+/// disabled, whose platform calls always succeed.
+fn ime_test_env() -> ImeTestEnv {
+    ime_test_env_with(FakeImePlatform::available_and(false))
 }
 
 /// Test config with IME auto-control re-enabled: `test_config()` disables it
@@ -100,7 +131,7 @@ fn set_cursor(doc: &mut helix_view::Document, view_id: helix_view::ViewId, posit
 /// a default ImeContext with saved_state=None and current_region=None.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_ime_context_initialized_on_view_creation() -> anyhow::Result<()> {
-    let _ime_guard = ime_test_lock();
+    let _ime_env = ime_test_env();
     let app = Application::new(
         Args::default(),
         ime_test_config(),
@@ -139,7 +170,7 @@ async fn test_ime_context_initialized_on_view_creation() -> anyhow::Result<()> {
 /// This test verifies that DocumentDidOpen event triggers initialize_view_ime_state.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_ime_context_reset_on_document_open() -> anyhow::Result<()> {
-    let _ime_guard = ime_test_lock();
+    let _ime_env = ime_test_env();
     let mut app = Application::new(
         Args::default(),
         ime_test_config(),
@@ -186,7 +217,7 @@ async fn test_ime_context_reset_on_document_open() -> anyhow::Result<()> {
 /// as platform-specific IME APIs may not be available in test environment.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_ime_auto_closed_on_view_init_when_system_ime_enabled() -> anyhow::Result<()> {
-    let _ime_guard = ime_test_lock();
+    let _ime_env = ime_test_env();
     // Create a new application (this triggers view initialization)
     let app = Application::new(
         Args::default(),
@@ -229,7 +260,7 @@ async fn test_ime_auto_closed_on_view_init_when_system_ime_enabled() -> anyhow::
 /// the IME state remains closed and context is properly initialized.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_ime_stays_closed_on_view_init_when_system_ime_disabled() -> anyhow::Result<()> {
-    let _ime_guard = ime_test_lock();
+    let _ime_env = ime_test_env();
     // Create a new application (this triggers view initialization)
     let app = Application::new(
         Args::default(),
@@ -269,7 +300,7 @@ async fn test_ime_stays_closed_on_view_init_when_system_ime_disabled() -> anyhow
 /// This test verifies FR-017: each view independently maintains IME state.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_ime_context_independence_per_view() -> anyhow::Result<()> {
-    let _ime_guard = ime_test_lock();
+    let _ime_env = ime_test_env();
     let mut app = Application::new(
         Args::default(),
         ime_test_config(),
@@ -326,7 +357,7 @@ async fn test_ime_context_independence_per_view() -> anyhow::Result<()> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_cursor_move_uses_primary_selection_in_multi_cursor() -> anyhow::Result<()> {
-    let _ime_guard = ime_test_lock();
+    let _ime_env = ime_test_env();
     let mut app = Application::new(
         Args::default(),
         ime_test_config(),
@@ -371,7 +402,7 @@ async fn test_cursor_move_uses_primary_selection_in_multi_cursor() -> anyhow::Re
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_cursor_move_entire_file_when_syntax_loading() -> anyhow::Result<()> {
-    let _ime_guard = ime_test_lock();
+    let _ime_env = ime_test_env();
     let mut app = Application::new(
         Args::default(),
         ime_test_config(),
@@ -408,7 +439,7 @@ async fn test_cursor_move_entire_file_when_syntax_loading() -> anyhow::Result<()
 /// that IME region detection returns EntireFile.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_ime_enabled_in_unparseable_file_anywhere() -> anyhow::Result<()> {
-    let _ime_guard = ime_test_lock();
+    let _ime_env = ime_test_env();
     use helix_core::syntax::detect_ime_sensitive_region;
 
     let app = Application::new(
@@ -456,7 +487,7 @@ async fn test_ime_enabled_in_unparseable_file_anywhere() -> anyhow::Result<()> {
 /// a file with invalid syntax that cannot be parsed.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_ime_enabled_in_syntax_error_file_anywhere() -> anyhow::Result<()> {
-    let _ime_guard = ime_test_lock();
+    let _ime_env = ime_test_env();
     use helix_core::syntax::detect_ime_sensitive_region;
 
     let app = Application::new(
@@ -503,7 +534,7 @@ async fn test_ime_enabled_in_syntax_error_file_anywhere() -> anyhow::Result<()> 
 /// including files with no language assigned, invalid syntax, etc.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_ime_region_detection_syntax_error_scenarios() -> anyhow::Result<()> {
-    let _ime_guard = ime_test_lock();
+    let _ime_env = ime_test_env();
     use helix_core::syntax::detect_ime_sensitive_region;
 
     let app = Application::new(
@@ -551,7 +582,7 @@ async fn test_ime_region_detection_syntax_error_scenarios() -> anyhow::Result<()
 /// @string captures in highlights.scm, and verify that EntireFile is returned.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_ime_enabled_in_file_without_string_comment_types() -> anyhow::Result<()> {
-    let _ime_guard = ime_test_lock();
+    let _ime_env = ime_test_env();
     use helix_core::syntax::detect_ime_sensitive_region;
 
     let app = Application::new(
@@ -626,7 +657,7 @@ async fn test_ime_enabled_in_file_without_string_comment_types() -> anyhow::Resu
 /// identifies languages that don't support these types.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_ime_region_detection_language_without_string_comment() -> anyhow::Result<()> {
-    let _ime_guard = ime_test_lock();
+    let _ime_env = ime_test_env();
     use helix_core::syntax::detect_ime_sensitive_region;
 
     let app = Application::new(
@@ -683,7 +714,7 @@ async fn test_ime_region_detection_language_without_string_comment() -> anyhow::
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_cursor_move_region_detection_cache() -> anyhow::Result<()> {
-    let _ime_guard = ime_test_lock();
+    let _ime_env = ime_test_env();
     let mut app = Application::new(
         Args::default(),
         ime_test_config(),
@@ -713,7 +744,7 @@ async fn test_cursor_move_region_detection_cache() -> anyhow::Result<()> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_cursor_move_skips_when_not_insert_mode() -> anyhow::Result<()> {
-    let _ime_guard = ime_test_lock();
+    let _ime_env = ime_test_env();
     let mut app = Application::new(
         Args::default(),
         ime_test_config(),
@@ -741,7 +772,7 @@ async fn test_cursor_move_skips_when_not_insert_mode() -> anyhow::Result<()> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_cursor_move_latency_within_budget() -> anyhow::Result<()> {
-    let _ime_guard = ime_test_lock();
+    let _ime_env = ime_test_env();
     let mut app = Application::new(
         Args::default(),
         ime_test_config(),
@@ -834,7 +865,7 @@ third line"#;
 #[cfg(not(target_os = "windows"))]
 #[tokio::test(flavor = "multi_thread")]
 async fn test_cursor_move_robust_under_rapid_changes() -> anyhow::Result<()> {
-    let _ime_guard = ime_test_lock();
+    let _ime_env = ime_test_env();
     let mut app = Application::new(
         Args::default(),
         ime_test_config(),
@@ -897,6 +928,202 @@ async fn test_cursor_move_robust_under_rapid_changes() -> anyhow::Result<()> {
     assert!(
         snapshot.region_detection_calls >= 3,
         "Rapid cursor movements should still trigger region detection"
+    );
+
+    Ok(())
+}
+
+/// End-to-end: the engine must actually drive the *platform* IME through the
+/// designed lifecycle:
+///
+/// - view init closes the system IME (FR-001);
+/// - entering a sensitive region with no saved state does NOT auto-enable
+///   (the user must enable IME themselves first);
+/// - the user enables IME manually while in a string;
+/// - moving into code saves that state and disables the IME;
+/// - moving back into the string restores it.
+///
+/// This is the assertion that was missing while the fcitx5-remote breakage
+/// shipped: the old tests only checked internal registry state, and platform
+/// failures were swallowed by design (FR-019), so "control works" and
+/// "control silently does nothing" were observationally identical.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_engine_toggles_platform_ime_by_region() -> anyhow::Result<()> {
+    // The user starts with IME enabled (as if they were typing Chinese).
+    let fake = FakeImePlatform::available_and(true);
+    let _ime_env = ime_test_env_with(fake.clone());
+
+    let mut app = Application::new(
+        Args::default(),
+        ime_test_config(),
+        test_syntax_loader(None),
+        WorkspaceTrust::fully_trusted(),
+    )?;
+
+    // 0. View init must have closed the system IME (FR-001), for real.
+    assert!(
+        !fake.enabled.load(Ordering::Acquire),
+        "view initialization must close the platform IME (FR-001)"
+    );
+    assert!(
+        fake.set_calls.load(Ordering::Relaxed) >= 1,
+        "engine must actually issue platform control calls"
+    );
+
+    let view_id = app.editor.tree.focus;
+    let doc_id = overwrite_document_text(
+        &mut app,
+        view_id,
+        indoc! {r##"
+            fn demo() {
+                let code = 99;
+                let text = "你好";
+            }
+        "##},
+    );
+    let loader = app.editor.syn_loader.load();
+    {
+        let doc = app.editor.documents.get_mut(&doc_id).unwrap();
+        doc.set_language_by_language_id("rust", &loader)?;
+    }
+
+    app.editor.mode = Mode::Insert;
+    let set_calls_before = fake.set_calls.load(Ordering::Relaxed);
+
+    // 1. String region, no saved state yet: the engine must not auto-enable.
+    {
+        let doc = app.editor.documents.get_mut(&doc_id).unwrap();
+        let text_str = doc.text().to_string();
+        set_cursor(doc, view_id, char_offset(&text_str, "你好"));
+    }
+    ime::handle_cursor_move(&mut app.editor, view_id)?;
+
+    assert!(
+        !fake.enabled.load(Ordering::Acquire),
+        "entering a sensitive region with no saved state must not enable the IME"
+    );
+    assert_eq!(
+        fake.set_calls.load(Ordering::Relaxed),
+        set_calls_before,
+        "no platform control call is expected while only entering a sensitive region"
+    );
+
+    // 2. The user enables IME themselves (e.g. Ctrl+Space, outside Helix).
+    fake.enabled.store(true, Ordering::Release);
+
+    // 3. Code region: the engine saves the user's state and disables the IME.
+    {
+        let doc = app.editor.documents.get_mut(&doc_id).unwrap();
+        let text_str = doc.text().to_string();
+        set_cursor(doc, view_id, char_offset(&text_str, "99"));
+    }
+    ime::handle_cursor_move(&mut app.editor, view_id)?;
+
+    assert!(
+        !fake.enabled.load(Ordering::Acquire),
+        "code region must disable the platform IME"
+    );
+
+    // 4. Back to the string region: the saved (enabled) state is restored.
+    {
+        let doc = app.editor.documents.get_mut(&doc_id).unwrap();
+        let text_str = doc.text().to_string();
+        set_cursor(doc, view_id, char_offset(&text_str, "你好"));
+    }
+    ime::handle_cursor_move(&mut app.editor, view_id)?;
+
+    assert!(
+        fake.enabled.load(Ordering::Acquire),
+        "returning to a sensitive region must restore the saved IME state"
+    );
+
+    Ok(())
+}
+
+/// FR-019: when every platform call fails, cursor moves must still succeed
+/// and internal region tracking must keep working (the editor stays usable).
+#[tokio::test(flavor = "multi_thread")]
+async fn test_engine_tolerates_platform_failures() -> anyhow::Result<()> {
+    let fake = FakeImePlatform::available_and(false);
+    fake.query_fails.store(true, Ordering::Release);
+    fake.control_fails.store(true, Ordering::Release);
+    let _ime_env = ime_test_env_with(fake.clone());
+
+    let mut app = Application::new(
+        Args::default(),
+        ime_test_config(),
+        test_syntax_loader(None),
+        WorkspaceTrust::fully_trusted(),
+    )?;
+    let view_id = app.editor.tree.focus;
+    let doc_id = overwrite_document_text(
+        &mut app,
+        view_id,
+        indoc! {r##"
+            fn demo() {
+                let text = "你好";
+            }
+        "##},
+    );
+    let loader = app.editor.syn_loader.load();
+    {
+        let doc = app.editor.documents.get_mut(&doc_id).unwrap();
+        doc.set_language_by_language_id("rust", &loader)?;
+    }
+
+    app.editor.mode = Mode::Insert;
+    {
+        let doc = app.editor.documents.get_mut(&doc_id).unwrap();
+        let text_str = doc.text().to_string();
+        set_cursor(doc, view_id, char_offset(&text_str, "你好"));
+    }
+
+    // Must not propagate the platform error (FR-019).
+    ime::handle_cursor_move(&mut app.editor, view_id)?;
+
+    let ctx = get_ime_context(doc_id, view_id).expect("IME context should exist");
+    assert_eq!(
+        ctx.current_region,
+        Some(ImeSensitiveRegion::StringContent),
+        "region tracking must keep working despite platform failures"
+    );
+    assert!(fake.query_calls.load(Ordering::Relaxed) >= 1);
+
+    Ok(())
+}
+
+/// Live platform contract test: verifies the real OS controller can query and
+/// toggle the session IME. Ignored by default because it flips the user's
+/// actual input method — run explicitly on a desktop with fcitx/ibus:
+/// `cargo integration-test ime -- --ignored --test-threads=1`
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "toggles the real session IME; run explicitly on a desktop with fcitx/ibus"]
+async fn test_live_platform_round_trip() -> anyhow::Result<()> {
+    use helix_term::handlers::ime::platform as live;
+
+    // Take the lock (no fake!) so a parallel IME test cannot install its
+    // fake platform under us mid-flight.
+    let _guard = ime_test_lock();
+
+    live::initialize()?;
+    if !live::is_ime_available() {
+        // Legitimate on headless CI: nothing to verify.
+        return Ok(());
+    }
+
+    let before = live::is_ime_enabled()?;
+    live::set_ime_enabled(!before)?;
+    let after = live::is_ime_enabled()?;
+    live::set_ime_enabled(before)?; // restore the user's state
+
+    assert_ne!(
+        before, after,
+        "set_ime_enabled must actually change the real platform state"
+    );
+    assert_eq!(
+        live::is_ime_enabled()?,
+        before,
+        "the user's original IME state must be restored"
     );
 
     Ok(())
