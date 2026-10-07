@@ -2505,19 +2505,10 @@ impl Document {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct ViewData {
     view_position: ViewPosition,
     ime_state: ImeState,
-}
-
-impl Default for ViewData {
-    fn default() -> Self {
-        Self {
-            view_position: ViewPosition::default(),
-            ime_state: ImeState::default(),
-        }
-    }
 }
 
 impl ViewData {

@@ -296,8 +296,7 @@ pub fn handle_cursor_move(editor: &mut Editor, view_id: ViewId) -> Result<()> {
                 let text = doc.text().slice(..);
                 let syntax = doc.syntax();
                 let loader = doc.syntax_loader();
-                let detection =
-                    detect_ime_sensitive_region(syntax, text, &*loader, cursor_byte_pos);
+                let detection = detect_ime_sensitive_region(syntax, text, &loader, cursor_byte_pos);
                 let region = detection.region;
                 let snap = registry::with_context_mut(doc_id, view_id, editor_mode, |ctx| {
                     ctx.cached_region_span = detection.node_range.and_then(|(start, end)| {
@@ -414,7 +413,7 @@ pub fn handle_mode_switch(
             let loader = doc.syntax_loader();
 
             // Detect IME sensitive region
-            let detection = detect_ime_sensitive_region(syntax, text, &*loader, cursor_byte_pos);
+            let detection = detect_ime_sensitive_region(syntax, text, &loader, cursor_byte_pos);
 
             // Update context with detected region
             registry::with_context_mut(doc_id, view_id, old_mode, |ctx| {
@@ -463,7 +462,7 @@ pub fn handle_mode_switch(
         let loader = doc.syntax_loader();
 
         // Detect IME sensitive region (always detect on mode switch)
-        let detection = detect_ime_sensitive_region(syntax, text, &*loader, cursor_byte_pos);
+        let detection = detect_ime_sensitive_region(syntax, text, &loader, cursor_byte_pos);
         registry::with_context_mut(doc_id, view_id, new_mode, |ctx| {
             ctx.cached_region_span = detection.node_range.and_then(|(start, end)| {
                 (start < end).then_some(ImeRegionSpan {
@@ -562,7 +561,7 @@ pub fn start_cleanup_task() {
             );
 
             // Periodic consistency check every hour
-            if metrics.cleanup_count() % 12 == 0 {
+            if metrics.cleanup_count().is_multiple_of(12) {
                 match registry::verify_all_cached_states() {
                     Ok(0) => log::debug!("All IME cached states are consistent"),
                     Ok(count) => log::warn!("Found {} inconsistent IME states", count),

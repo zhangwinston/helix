@@ -1576,43 +1576,39 @@ pub fn detect_ime_sensitive_region(
         let is_comment_node =
             contains_ignore_ascii_case(node_kind, b"comment") || node_kind == "comment_content";
 
-        if is_comment_node {
-            if cursor_pos >= node_start && cursor_pos < node_end {
-                // For comment_content nodes, they don't include the comment marker, so always treat as content
-                if node_kind == "comment_content" {
-                    log::trace!(
-                        "IME region detection: found comment_content node, returning CommentContent"
-                    );
-                    return ImeRegionDetection::new(
-                        ImeSensitiveRegion::CommentContent,
-                        Some((node_start, node_end)),
-                    );
-                }
-                // For other comment nodes, exclude comment header symbols (FR-005)
-                if cursor_pos == node_start {
-                    log::trace!(
-                        "IME region detection: found comment node at start, returning Code"
-                    );
-                    return ImeRegionDetection::code();
-                }
-                // Include comment tail first character (FR-007)
-                if cursor_pos == node_end - 1 {
-                    log::trace!(
-                        "IME region detection: found comment node at end, returning CommentContent"
-                    );
-                    return ImeRegionDetection::new(
-                        ImeSensitiveRegion::CommentContent,
-                        Some((node_start.saturating_add(1), node_end)),
-                    );
-                }
+        if is_comment_node && cursor_pos >= node_start && cursor_pos < node_end {
+            // For comment_content nodes, they don't include the comment marker, so always treat as content
+            if node_kind == "comment_content" {
                 log::trace!(
-                    "IME region detection: found comment node in content, returning CommentContent"
+                    "IME region detection: found comment_content node, returning CommentContent"
+                );
+                return ImeRegionDetection::new(
+                    ImeSensitiveRegion::CommentContent,
+                    Some((node_start, node_end)),
+                );
+            }
+            // For other comment nodes, exclude comment header symbols (FR-005)
+            if cursor_pos == node_start {
+                log::trace!("IME region detection: found comment node at start, returning Code");
+                return ImeRegionDetection::code();
+            }
+            // Include comment tail first character (FR-007)
+            if cursor_pos == node_end - 1 {
+                log::trace!(
+                    "IME region detection: found comment node at end, returning CommentContent"
                 );
                 return ImeRegionDetection::new(
                     ImeSensitiveRegion::CommentContent,
                     Some((node_start.saturating_add(1), node_end)),
                 );
             }
+            log::trace!(
+                "IME region detection: found comment node in content, returning CommentContent"
+            );
+            return ImeRegionDetection::new(
+                ImeSensitiveRegion::CommentContent,
+                Some((node_start.saturating_add(1), node_end)),
+            );
         }
 
         // Check if node type contains "string" (excluding string_start and string_end)
@@ -1622,41 +1618,39 @@ pub fn detect_ime_sensitive_region(
             && !node_kind.contains("string_end"))
             || node_kind == "string_content";
 
-        if is_string_node {
-            if cursor_pos >= node_start && cursor_pos < node_end {
-                // For string_content nodes, they don't include quotes, so always treat as content
-                if node_kind == "string_content" {
-                    log::trace!(
-                        "IME region detection: found string_content node, returning StringContent"
-                    );
-                    return ImeRegionDetection::new(
-                        ImeSensitiveRegion::StringContent,
-                        Some((node_start, node_end)),
-                    );
-                }
-                // For other string nodes, exclude leading quote symbols (FR-004)
-                if cursor_pos == node_start {
-                    log::trace!("IME region detection: found string node at start, returning Code");
-                    return ImeRegionDetection::code();
-                }
-                // Include trailing quote first character (FR-006)
-                if cursor_pos == node_end - 1 {
-                    log::trace!(
-                        "IME region detection: found string node at end, returning StringContent"
-                    );
-                    return ImeRegionDetection::new(
-                        ImeSensitiveRegion::StringContent,
-                        Some((node_start.saturating_add(1), node_end)),
-                    );
-                }
+        if is_string_node && cursor_pos >= node_start && cursor_pos < node_end {
+            // For string_content nodes, they don't include quotes, so always treat as content
+            if node_kind == "string_content" {
                 log::trace!(
-                    "IME region detection: found string node in content, returning StringContent"
+                    "IME region detection: found string_content node, returning StringContent"
+                );
+                return ImeRegionDetection::new(
+                    ImeSensitiveRegion::StringContent,
+                    Some((node_start, node_end)),
+                );
+            }
+            // For other string nodes, exclude leading quote symbols (FR-004)
+            if cursor_pos == node_start {
+                log::trace!("IME region detection: found string node at start, returning Code");
+                return ImeRegionDetection::code();
+            }
+            // Include trailing quote first character (FR-006)
+            if cursor_pos == node_end - 1 {
+                log::trace!(
+                    "IME region detection: found string node at end, returning StringContent"
                 );
                 return ImeRegionDetection::new(
                     ImeSensitiveRegion::StringContent,
                     Some((node_start.saturating_add(1), node_end)),
                 );
             }
+            log::trace!(
+                "IME region detection: found string node in content, returning StringContent"
+            );
+            return ImeRegionDetection::new(
+                ImeSensitiveRegion::StringContent,
+                Some((node_start.saturating_add(1), node_end)),
+            );
         }
 
         current_check = n.parent();

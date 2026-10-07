@@ -1767,6 +1767,13 @@ impl Application {
     }
 }
 
+impl ui::menu::Item for lsp::MessageActionItem {
+    type Data = ();
+    fn format(&self, _data: &Self::Data) -> tui::widgets::Row<'_> {
+        self.title.as_str().into()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::poll_stream_immediately;
@@ -1856,12 +1863,5 @@ mod tests {
             .expect("stream should still be wakeable after an immediate poll");
 
         assert_eq!(item, Some(42));
-    }
-}
-
-impl ui::menu::Item for lsp::MessageActionItem {
-    type Data = ();
-    fn format(&self, _data: &Self::Data) -> tui::widgets::Row<'_> {
-        self.title.as_str().into()
     }
 }

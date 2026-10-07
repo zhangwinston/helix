@@ -80,23 +80,22 @@ fn spawn_worker(view_id: ViewId, state: Arc<PendingState>) {
                 break;
             }
 
-            if state.sequence.load(Ordering::Acquire) == observed_seq {
-                if state
+            if state.sequence.load(Ordering::Acquire) == observed_seq
+                && state
                     .worker_running
                     .compare_exchange(true, false, Ordering::AcqRel, Ordering::Acquire)
                     .is_ok()
-                {
-                    // Check if new events arrived after releasing the flag.
-                    if state.sequence.load(Ordering::Acquire) == observed_seq {
-                        break;
-                    }
-
-                    if state.worker_running.swap(true, Ordering::AcqRel) {
-                        break;
-                    }
-
-                    continue;
+            {
+                // Check if new events arrived after releasing the flag.
+                if state.sequence.load(Ordering::Acquire) == observed_seq {
+                    break;
                 }
+
+                if state.worker_running.swap(true, Ordering::AcqRel) {
+                    break;
+                }
+
+                continue;
             }
         }
     });

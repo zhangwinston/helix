@@ -1,3 +1,8 @@
+// The IME test lock guards each test's whole body and is held across `.await`s
+// on purpose (see `ime_test_lock`). Each test owns its tokio runtime, so
+// waiting on the lock never starves the runtime of the test holding it.
+#![allow(clippy::await_holding_lock)]
+
 use super::helpers::{test_config, test_syntax_loader};
 #[allow(unused_imports)]
 use helix_core::{
@@ -427,7 +432,7 @@ async fn test_ime_enabled_in_unparseable_file_anywhere() -> anyhow::Result<()> {
     for pos in test_positions {
         if pos < text.len_chars() {
             let byte_pos = text.char_to_byte(pos);
-            let region = detect_ime_sensitive_region(syntax, text, &*loader, byte_pos).region;
+            let region = detect_ime_sensitive_region(syntax, text, &loader, byte_pos).region;
 
             // For unparseable files, should return EntireFile
             assert_eq!(
@@ -475,7 +480,7 @@ async fn test_ime_enabled_in_syntax_error_file_anywhere() -> anyhow::Result<()> 
     for pos in test_positions {
         if pos < text.len_chars() {
             let byte_pos = text.char_to_byte(pos);
-            let region = detect_ime_sensitive_region(syntax, text, &*loader, byte_pos).region;
+            let region = detect_ime_sensitive_region(syntax, text, &loader, byte_pos).region;
 
             // For syntax error files, should return EntireFile if syntax is None
             if syntax.is_none() {
@@ -522,7 +527,7 @@ async fn test_ime_region_detection_syntax_error_scenarios() -> anyhow::Result<()
         } else {
             0
         };
-        let region = detect_ime_sensitive_region(None, text, &*loader, byte_pos).region;
+        let region = detect_ime_sensitive_region(None, text, &loader, byte_pos).region;
         assert_eq!(
             region,
             ImeSensitiveRegion::EntireFile,
@@ -583,7 +588,7 @@ async fn test_ime_enabled_in_file_without_string_comment_types() -> anyhow::Resu
             if pos < text.len_chars() {
                 let byte_pos = text.char_to_byte(pos);
                 let region =
-                    detect_ime_sensitive_region(Some(syntax), text, &*loader, byte_pos).region;
+                    detect_ime_sensitive_region(Some(syntax), text, &loader, byte_pos).region;
 
                 // If language doesn't have string or comment types, should return EntireFile
                 if !has_comment && !has_string {
@@ -657,7 +662,7 @@ async fn test_ime_region_detection_language_without_string_comment() -> anyhow::
         } else {
             0
         };
-        let region = detect_ime_sensitive_region(Some(syntax), text, &*loader, byte_pos).region;
+        let region = detect_ime_sensitive_region(Some(syntax), text, &loader, byte_pos).region;
 
         // If language doesn't have string or comment types, should return EntireFile
         if !has_comment && !has_string {
@@ -759,11 +764,10 @@ async fn test_cursor_move_latency_within_budget() -> anyhow::Result<()> {
         "All cursor move calls should be recorded (T068)"
     );
 
-    let avg_ns = if snapshot.cursor_move_calls == 0 {
-        0
-    } else {
-        snapshot.cursor_move_total_time_ns / snapshot.cursor_move_calls
-    };
+    let avg_ns = snapshot
+        .cursor_move_total_time_ns
+        .checked_div(snapshot.cursor_move_calls)
+        .unwrap_or(0);
 
     // 100ms budget per requirement T068 / SC-001
     const THRESHOLD_NS: u64 = 100_000_000;
