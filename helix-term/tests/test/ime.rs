@@ -1092,6 +1092,105 @@ async fn test_engine_tolerates_platform_failures() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Real-chain reproduction: in the live editor, cursor moves reach the engine
+/// through the `SelectionDidChange` hook -> scheduler debounce (50ms) -> job
+/// dispatch — not through direct `handle_cursor_move` calls. Verifies the
+/// user-visible lifecycle end to end: enter insert, manually enable the IME
+/// inside a string, move the cursor into code — the deferred path must
+/// actually switch the platform IME off.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_scheduler_path_controls_platform_ime() -> anyhow::Result<()> {
+    use tokio_stream::wrappers::UnboundedReceiverStream;
+
+    let fake = FakeImePlatform::available_and(true);
+    let _ime_env = ime_test_env_with(fake.clone());
+
+    let mut app = Application::new(
+        Args::default(),
+        ime_test_config(),
+        test_syntax_loader(None),
+        WorkspaceTrust::fully_trusted(),
+    )?;
+    let view_id = app.editor.tree.focus;
+    let doc_id = overwrite_document_text(
+        &mut app,
+        view_id,
+        indoc! {r##"
+            fn demo() {
+                let code = 99;
+                let text = "你好";
+            }
+        "##},
+    );
+    let loader = app.editor.syn_loader.load();
+    {
+        let doc = app.editor.documents.get_mut(&doc_id).unwrap();
+        doc.set_language_by_language_id("rust", &loader)?;
+    }
+
+    let (_tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut stream = UnboundedReceiverStream::new(rx);
+
+    // Enter insert like the real `i` key does: switch the mode, then run the
+    // IME mode-switch handler (the real key dispatches the OnModeSwitch event
+    // which calls this same handler — setting only the mode field without the
+    // handler, or calling only the handler without the mode, is not faithful).
+    app.editor.mode = Mode::Insert;
+    ime::handle_mode_switch(&mut app.editor, view_id, Mode::Normal, Mode::Insert)?;
+
+    // The deferred path lands on the editor loop via a job after a 50ms
+    // debounce; under a loaded test runner it can arrive arbitrarily late, so
+    // poll for the observable effect instead of sleeping a fixed amount.
+
+    // Cursor into the string; wait until the deferred path has detected the
+    // region (visible in the registry).
+    {
+        let doc = app.editor.documents.get_mut(&doc_id).unwrap();
+        let text_str = doc.text().to_string();
+        set_cursor(doc, view_id, char_offset(&text_str, "你好"));
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while get_ime_context(doc_id, view_id).and_then(|ctx| ctx.current_region)
+        != Some(ImeSensitiveRegion::StringContent)
+    {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "deferred path did not detect the string region in time"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            app.event_loop_until_idle(&mut stream),
+        )
+        .await;
+    }
+
+    // The user enables the IME manually (e.g. Ctrl+Space handled by the IME).
+    fake.enabled.store(true, Ordering::Release);
+
+    // Cursor into code: the deferred path must switch the platform IME off.
+    {
+        let doc = app.editor.documents.get_mut(&doc_id).unwrap();
+        let text_str = doc.text().to_string();
+        set_cursor(doc, view_id, char_offset(&text_str, "99"));
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while fake.enabled.load(Ordering::Acquire) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "leaving the sensitive region must close the platform IME via the scheduler path"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            app.event_loop_until_idle(&mut stream),
+        )
+        .await;
+    }
+
+    Ok(())
+}
+
 /// Live platform contract test: verifies the real OS controller can query and
 /// toggle the session IME. Ignored by default because it flips the user's
 /// actual input method — run explicitly on a desktop with fcitx/ibus:
