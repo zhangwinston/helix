@@ -117,7 +117,9 @@ fn main() -> anyhow::Result<()> {
         println!("   当前平台不支持 IME 或未安装 IME");
     }
 
-    println!("\n=== 演示完成 ===");
+    println!("\n=== 演示完成 ===\n");
+    println!("提示: 这个演示展示了 IME 平台抽象层的功能。");
+    println!("在 Helix 编辑器中使用时，IME 会根据光标位置自动开启/关闭。");
     Ok(())
 }
 
