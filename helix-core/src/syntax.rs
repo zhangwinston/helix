@@ -1393,6 +1393,135 @@ mod test {
             source.len(),
         );
     }
+
+    /// Asserts the IME region detected at every byte position of `source`:
+    /// positions within `sensitive` must yield `expected`, all others `Code`.
+    #[track_caller]
+    fn assert_ime_span(
+        source: &str,
+        sensitive: std::ops::RangeInclusive<usize>,
+        expected: ImeSensitiveRegion,
+    ) {
+        let source = Rope::from_str(source);
+        let language = LOADER.language_for_name("rust").unwrap();
+        let syntax = Syntax::new(source.slice(..), language, &LOADER).unwrap();
+
+        for pos in 0..=source.len_bytes() {
+            let region =
+                detect_ime_sensitive_region(Some(&syntax), source.slice(..), &LOADER, pos).region;
+            let want = if sensitive.contains(&pos) {
+                expected
+            } else {
+                ImeSensitiveRegion::Code
+            };
+            assert_eq!(region, want, "unexpected IME region at byte position {pos}");
+        }
+    }
+
+    #[test]
+    fn test_ime_region_line_comment_boundaries() {
+        // `//` is a complete marker: only positions from right after the second
+        // `/` — including the end-of-line cursor — are comment content.
+        // Positions 0 and 1 sit inside the marker and must stay Code.
+        let line = "// Heavily based on https://github.com/codemirror/closebrackets/";
+        assert_ime_span(
+            &format!("{line}\nfn f() {{}}\n"),
+            2..=line.len(),
+            ImeSensitiveRegion::CommentContent,
+        );
+    }
+
+    #[test]
+    fn test_ime_region_inner_doc_comment_boundaries() {
+        // Everything after the leading `//` of `//!` is content, including the
+        // position right after the `!`.
+        let line =
+            "//! this module provides the functionality to insert the paired closing character.";
+        assert_ime_span(
+            &format!("{line}\nfn f() {{}}\n"),
+            2..=line.len(),
+            ImeSensitiveRegion::CommentContent,
+        );
+    }
+
+    #[test]
+    fn test_ime_region_outer_doc_comment_boundaries() {
+        let line = "/// outer doc comment";
+        assert_ime_span(
+            &format!("{line}\nfn f() {{}}\n"),
+            2..=line.len(),
+            ImeSensitiveRegion::CommentContent,
+        );
+    }
+
+    #[test]
+    fn test_ime_region_comment_with_multibyte_content() {
+        let line = "// 你好";
+        assert_ime_span(
+            &format!("{line}\nfn f() {{}}\n"),
+            2..=line.len(),
+            ImeSensitiveRegion::CommentContent,
+        );
+    }
+
+    #[test]
+    fn test_ime_region_empty_line_comment() {
+        // The end-of-line cursor of a bare `//` is still comment content.
+        let line = "//";
+        assert_ime_span(
+            &format!("{line}\nfn f() {{}}\n"),
+            2..=line.len(),
+            ImeSensitiveRegion::CommentContent,
+        );
+    }
+
+    #[test]
+    fn test_ime_region_block_comment_boundaries() {
+        // The `/*` marker is skipped; the closing `*/` stays outside the span
+        // (positions inside the closing token remain content per FR-007, but
+        // the position after `*/` is Code again).
+        let line = "/* block */";
+        assert_ime_span(
+            &format!("{line}\nfn f() {{}}\n"),
+            2..=line.len() - 1,
+            ImeSensitiveRegion::CommentContent,
+        );
+    }
+
+    #[test]
+    fn test_ime_region_multiline_block_comment() {
+        let line = "/* first\nsecond */";
+        assert_ime_span(
+            &format!("{line}\nfn f() {{}}\n"),
+            2..=line.len() - 1,
+            ImeSensitiveRegion::CommentContent,
+        );
+    }
+
+    #[test]
+    fn test_ime_region_string_boundaries() {
+        // Quotes are excluded (FR-004); the position right before the trailing
+        // quote is content (FR-006).
+        let line = r#""string""#;
+        assert_ime_span(
+            &format!("{line}\nfn f() {{}}\n"),
+            1..=line.len() - 1,
+            ImeSensitiveRegion::StringContent,
+        );
+    }
+
+    #[test]
+    fn test_ime_region_span_extends_to_eol() {
+        // The span cached for cursor-move handling must keep the end-of-line
+        // cursor inside a line comment: for `// c` the span is [2, 5),
+        // covering positions 2..=4 where position 4 is the newline.
+        let source = Rope::from_str("// c\nfn f() {}\n");
+        let language = LOADER.language_for_name("rust").unwrap();
+        let syntax = Syntax::new(source.slice(..), language, &LOADER).unwrap();
+        let detection = detect_ime_sensitive_region(Some(&syntax), source.slice(..), &LOADER, 2);
+        assert_eq!(detection.region, ImeSensitiveRegion::CommentContent);
+        assert_eq!(detection.node_range, Some((2, 5)));
+    }
 }
 
 /// IME (Input Method Editor) sensitive region types.
@@ -1492,8 +1621,11 @@ fn language_has_string_or_comment_types(loader: &Loader, language: Language) -> 
 /// - Returns `EntireFile` if syntax parsing is unavailable, failed, or still in progress (FR-008, FR-009, FR-021)
 /// - Returns `EntireFile` if language doesn't have string/comment types (FR-010)
 /// - Detects comment and string regions by checking node types (simplified approach)
-/// - Excludes leading quote symbols (FR-004) and comment header symbols (FR-005)
-/// - Includes trailing quote first character (FR-006) and comment tail first character (FR-007)
+/// - Excludes leading quote symbols (FR-004) and the full comment marker prefix
+///   (`//`, `//!`, `/*`, ...) by matching the language's configured comment tokens (FR-005)
+/// - Includes trailing quote first character (FR-006) and comment tail first character (FR-007);
+///   line comments also include the end-of-line cursor position, where typed text
+///   still continues the comment
 #[inline]
 fn contains_ignore_ascii_case(haystack: &str, needle: &[u8]) -> bool {
     let h = haystack.as_bytes();
@@ -1519,8 +1651,6 @@ pub fn detect_ime_sensitive_region(
         return ImeRegionDetection::entire_file(source.len_bytes());
     };
 
-    let cursor_pos_u32 = cursor_pos as u32;
-
     let language = syntax.root_language();
     if !language_has_string_or_comment_types(loader, language) {
         log::trace!(
@@ -1528,20 +1658,6 @@ pub fn detect_ime_sensitive_region(
         );
         return ImeRegionDetection::entire_file(source.len_bytes());
     }
-
-    // Get the node at cursor position (including unnamed nodes)
-    let Some(node) = syntax
-        .tree()
-        .root_node()
-        .descendant_for_byte_range(cursor_pos_u32, cursor_pos_u32)
-    else {
-        // If we can't find a node, treat as code (non-sensitive)
-        log::trace!(
-            "IME region detection: no node found at cursor_pos={}, returning Code",
-            cursor_pos
-        );
-        return ImeRegionDetection::code();
-    };
 
     // Check if the current node or any of its parents is a comment or string node
     // We need to check parents because the cursor might be in a child node
@@ -1552,108 +1668,61 @@ pub fn detect_ime_sensitive_region(
         "markdown" | "markdown-rustdoc" | "markdown.inline"
     );
 
-    let mut current_check = Some(node);
+    // The cursor position is probed directly first. Tree-sitter can resolve a
+    // position exactly at a node's end byte to the node *following* it, so a
+    // second pass probes the preceding position while still testing the
+    // original cursor against each candidate span. This keeps the cursor at
+    // the end of a line comment inside the region: anything typed there
+    // continues the comment.
     let mut is_in_code_block = false;
-    while let Some(n) = current_check {
-        let node_kind = n.kind();
-        let node_start = n.start_byte() as usize;
-        let node_end = n.end_byte() as usize;
+    for (probe_index, probe_pos) in [Some(cursor_pos), cursor_pos.checked_sub(1)]
+        .into_iter()
+        .flatten()
+        .enumerate()
+    {
+        // Get the node at probe position (including unnamed nodes)
+        let Some(node) = syntax
+            .tree()
+            .root_node()
+            .descendant_for_byte_range(probe_pos as u32, probe_pos as u32)
+        else {
+            continue;
+        };
 
-        log::trace!(
-            "IME region detection: checking node_kind={}, node_range=[{}, {})",
-            node_kind,
-            node_start,
-            node_end
-        );
+        let mut current_check = Some(node);
+        while let Some(n) = current_check {
+            let node_kind = n.kind();
+            let node_start = n.start_byte() as usize;
+            let node_end = n.end_byte() as usize;
 
-        // For document languages, check if we're in a code block
-        if is_document_language && node_kind.contains("code_block") {
-            is_in_code_block = true;
-        }
-
-        // Check if node type contains "comment" (case-insensitive check for robustness)
-        // Also explicitly check for comment_content which might be a child node type
-        let is_comment_node =
-            contains_ignore_ascii_case(node_kind, b"comment") || node_kind == "comment_content";
-
-        if is_comment_node && cursor_pos >= node_start && cursor_pos < node_end {
-            // For comment_content nodes, they don't include the comment marker, so always treat as content
-            if node_kind == "comment_content" {
-                log::trace!(
-                    "IME region detection: found comment_content node, returning CommentContent"
-                );
-                return ImeRegionDetection::new(
-                    ImeSensitiveRegion::CommentContent,
-                    Some((node_start, node_end)),
-                );
-            }
-            // For other comment nodes, exclude comment header symbols (FR-005)
-            if cursor_pos == node_start {
-                log::trace!("IME region detection: found comment node at start, returning Code");
-                return ImeRegionDetection::code();
-            }
-            // Include comment tail first character (FR-007)
-            if cursor_pos == node_end - 1 {
-                log::trace!(
-                    "IME region detection: found comment node at end, returning CommentContent"
-                );
-                return ImeRegionDetection::new(
-                    ImeSensitiveRegion::CommentContent,
-                    Some((node_start.saturating_add(1), node_end)),
-                );
-            }
             log::trace!(
-                "IME region detection: found comment node in content, returning CommentContent"
+                "IME region detection: checking node_kind={}, node_range=[{}, {})",
+                node_kind,
+                node_start,
+                node_end
             );
-            return ImeRegionDetection::new(
-                ImeSensitiveRegion::CommentContent,
-                Some((node_start.saturating_add(1), node_end)),
-            );
+
+            // For document languages, check if we're in a code block. Only the
+            // direct probe counts: the preceding-position probe may reach into
+            // the previous line's tree and must not leak a code block across
+            // the line boundary.
+            if probe_index == 0 && is_document_language && node_kind.contains("code_block") {
+                is_in_code_block = true;
+            }
+
+            if let Some(detection) = node_ime_detection(
+                node_kind,
+                node_start,
+                node_end,
+                cursor_pos,
+                source,
+                language_config,
+            ) {
+                return detection;
+            }
+
+            current_check = n.parent();
         }
-
-        // Check if node type contains "string" (excluding string_start and string_end)
-        // Also explicitly check for string_content which is a common child node type
-        let is_string_node = (node_kind.contains("string")
-            && !node_kind.contains("string_start")
-            && !node_kind.contains("string_end"))
-            || node_kind == "string_content";
-
-        if is_string_node && cursor_pos >= node_start && cursor_pos < node_end {
-            // For string_content nodes, they don't include quotes, so always treat as content
-            if node_kind == "string_content" {
-                log::trace!(
-                    "IME region detection: found string_content node, returning StringContent"
-                );
-                return ImeRegionDetection::new(
-                    ImeSensitiveRegion::StringContent,
-                    Some((node_start, node_end)),
-                );
-            }
-            // For other string nodes, exclude leading quote symbols (FR-004)
-            if cursor_pos == node_start {
-                log::trace!("IME region detection: found string node at start, returning Code");
-                return ImeRegionDetection::code();
-            }
-            // Include trailing quote first character (FR-006)
-            if cursor_pos == node_end - 1 {
-                log::trace!(
-                    "IME region detection: found string node at end, returning StringContent"
-                );
-                return ImeRegionDetection::new(
-                    ImeSensitiveRegion::StringContent,
-                    Some((node_start.saturating_add(1), node_end)),
-                );
-            }
-            log::trace!(
-                "IME region detection: found string node in content, returning StringContent"
-            );
-            return ImeRegionDetection::new(
-                ImeSensitiveRegion::StringContent,
-                Some((node_start.saturating_add(1), node_end)),
-            );
-        }
-
-        current_check = n.parent();
     }
 
     // If we didn't find a comment or string node at the cursor position,
@@ -1677,4 +1746,137 @@ pub fn detect_ime_sensitive_region(
     // For other languages, default to code region (non-sensitive)
     log::trace!("IME region detection: no comment/string node found, returning Code");
     ImeRegionDetection::code()
+}
+
+/// Check a single node against the cursor position for IME region detection.
+///
+/// Returns `Some` only when the cursor lies within the node's *content* span.
+/// Positions inside the leading marker — or past the end — return `None` so
+/// the caller keeps walking the parent nodes: a `//!` doc comment, for
+/// example, resolves through its `doc_comment` child to the outer
+/// `line_comment`, whose span starts right after the `//` marker.
+fn node_ime_detection(
+    node_kind: &str,
+    node_start: usize,
+    node_end: usize,
+    cursor_pos: usize,
+    source: RopeSlice,
+    language_config: &LanguageConfiguration,
+) -> Option<ImeRegionDetection> {
+    // Check if node type contains "comment" (case-insensitive check for robustness)
+    if contains_ignore_ascii_case(node_kind, b"comment") {
+        let (start, end) = if node_kind == "comment_content" {
+            // Content child nodes already exclude the comment marker
+            (node_start, node_end)
+        } else {
+            comment_content_span(source, language_config, node_start, node_end)
+        };
+        if cursor_pos >= start && cursor_pos < end {
+            log::trace!(
+                "IME region detection: comment content span [{}, {}) contains cursor at {}, returning CommentContent",
+                start,
+                end,
+                cursor_pos
+            );
+            return Some(ImeRegionDetection::new(
+                ImeSensitiveRegion::CommentContent,
+                Some((start, end)),
+            ));
+        }
+    }
+
+    // Check if node type contains "string" (excluding string_start and string_end)
+    if node_kind.contains("string")
+        && !node_kind.contains("string_start")
+        && !node_kind.contains("string_end")
+    {
+        // Exclude leading quote symbols (FR-004), include the position right
+        // before the trailing quote (FR-006)
+        let (start, end) = if node_kind == "string_content" {
+            // Content child nodes already exclude the quotes
+            (node_start, node_end)
+        } else {
+            (node_start.saturating_add(1), node_end)
+        };
+        if cursor_pos >= start && cursor_pos < end {
+            log::trace!(
+                "IME region detection: string content span [{}, {}) contains cursor at {}, returning StringContent",
+                start,
+                end,
+                cursor_pos
+            );
+            return Some(ImeRegionDetection::new(
+                ImeSensitiveRegion::StringContent,
+                Some((start, end)),
+            ));
+        }
+    }
+
+    None
+}
+
+/// Compute the content span `[start, end)` of a comment node for IME detection.
+///
+/// The leading marker is skipped by matching the node's text against the
+/// language's configured comment tokens (FR-005):
+///
+/// - Line comments match the *shortest* `comment_tokens` entry, so `//!` and
+///   `///` content begins right after the base `//` marker. The span extends
+///   one byte past the node end: the cursor at the end of the line is still
+///   inside the comment, since anything typed there continues it (FR-007).
+/// - Block comments match the shortest `block_comment_tokens` start token;
+///   their span keeps the node end exclusive so the position right after the
+///   closing token is code again.
+/// - When no configured token matches (exotic grammars), fall back to
+///   skipping a single byte, preserving the historical behavior.
+fn comment_content_span(
+    source: RopeSlice,
+    language_config: &LanguageConfiguration,
+    node_start: usize,
+    node_end: usize,
+) -> (usize, usize) {
+    let line_marker_len = language_config
+        .comment_tokens
+        .as_deref()
+        .unwrap_or_default()
+        .iter()
+        .filter(|token| source_starts_with(source, node_start, node_end, token))
+        .map(|token| token.len())
+        .min();
+    if let Some(len) = line_marker_len {
+        // Grammars disagree on whether a line comment node swallows the
+        // trailing newline (Rust doc comments like `//!` do, plain `//`
+        // comments do not). Either way the span must include the cursor
+        // sitting on the line terminator — typing there continues the
+        // comment — but not the first position of the next line.
+        let end = if node_end > node_start && source.get_byte(node_end - 1) == Some(b'\n') {
+            node_end
+        } else {
+            node_end + 1
+        };
+        return (node_start + len, end);
+    }
+
+    let block_marker_len = language_config
+        .block_comment_tokens
+        .as_deref()
+        .unwrap_or_default()
+        .iter()
+        .filter(|token| source_starts_with(source, node_start, node_end, &token.start))
+        .map(|token| token.start.len())
+        .min();
+    if let Some(len) = block_marker_len {
+        return (node_start + len, node_end);
+    }
+
+    (node_start.saturating_add(1), node_end)
+}
+
+/// Whether the rope text starting at `start` begins with `token`, bounded by `end`.
+fn source_starts_with(source: RopeSlice, start: usize, end: usize, token: &str) -> bool {
+    start + token.len() <= end
+        && token
+            .bytes()
+            .enumerate()
+            .all(|(i, byte)| source.get_byte(start + i) == Some(byte))
 }

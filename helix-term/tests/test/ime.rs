@@ -126,6 +126,25 @@ fn set_cursor(doc: &mut helix_view::Document, view_id: helix_view::ViewId, posit
     doc.set_selection(view_id, Selection::single(position, position));
 }
 
+/// Moves the cursor to the char offset of `needle` plus `offset` and runs the
+/// IME cursor-move handling.
+fn move_cursor_to(
+    app: &mut Application,
+    doc_id: helix_view::DocumentId,
+    view_id: helix_view::ViewId,
+    needle: &str,
+    offset: usize,
+) -> anyhow::Result<()> {
+    let doc = app
+        .editor
+        .documents
+        .get_mut(&doc_id)
+        .ok_or_else(|| anyhow::anyhow!("document not found"))?;
+    let text_str = doc.text().to_string();
+    set_cursor(doc, view_id, char_offset(&text_str, needle) + offset);
+    ime::handle_cursor_move(&mut app.editor, view_id)
+}
+
 /// Test that IME context is initialized when a view is created.
 /// This test verifies that initialize_view_ime_state is called and creates
 /// a default ImeContext with saved_state=None and current_region=None.
@@ -1035,6 +1054,174 @@ async fn test_engine_toggles_platform_ime_by_region() -> anyhow::Result<()> {
     assert!(
         fake.enabled.load(Ordering::Acquire),
         "returning to a sensitive region must restore the saved IME state"
+    );
+
+    Ok(())
+}
+
+/// Boundary precision for `//` line comments (FR-005, FR-007):
+/// - the IME must restore only after the complete `//` marker, not between
+///   the two slashes;
+/// - the cursor at the end of the comment line is still comment content, so
+///   the IME must stay on there.
+#[cfg(not(target_os = "windows"))]
+#[tokio::test(flavor = "multi_thread")]
+async fn test_cursor_move_line_comment_boundaries() -> anyhow::Result<()> {
+    let fake = FakeImePlatform::available_and(true);
+    let _ime_env = ime_test_env_with(fake.clone());
+
+    let mut app = Application::new(
+        Args::default(),
+        ime_test_config(),
+        test_syntax_loader(None),
+        WorkspaceTrust::fully_trusted(),
+    )?;
+
+    let view_id = app.editor.tree.focus;
+    let comment = "// Heavily based on https://github.com/codemirror/closebrackets/";
+    let doc_id = overwrite_document_text(
+        &mut app,
+        view_id,
+        &format!("fn demo() {{\n    {comment}\n    let code = 99;\n}}\n"),
+    );
+    let loader = app.editor.syn_loader.load();
+    {
+        let doc = app.editor.documents.get_mut(&doc_id).unwrap();
+        doc.set_language_by_language_id("rust", &loader)?;
+    }
+
+    app.editor.mode = Mode::Insert;
+
+    // 1. Enter comment content with no saved state: no auto-enable.
+    move_cursor_to(&mut app, doc_id, view_id, comment, 2)?;
+    assert!(
+        !fake.enabled.load(Ordering::Acquire),
+        "entering a comment with no saved state must not enable the IME"
+    );
+
+    // 2. The user enables the IME themselves (typing Chinese in the comment).
+    fake.enabled.store(true, Ordering::Release);
+
+    // 3. Code region: the engine saves the user's state and closes the IME.
+    move_cursor_to(&mut app, doc_id, view_id, "99", 0)?;
+    assert!(
+        !fake.enabled.load(Ordering::Acquire),
+        "code region must disable the platform IME"
+    );
+
+    // 4. Between the two slashes of `//`: still inside the marker, still code.
+    move_cursor_to(&mut app, doc_id, view_id, comment, 1)?;
+    assert!(
+        !fake.enabled.load(Ordering::Acquire),
+        "the position inside the // marker is code and must not restore the IME"
+    );
+
+    // 5. Right after the second `/`: comment content — restore the saved state.
+    move_cursor_to(&mut app, doc_id, view_id, comment, 2)?;
+    assert!(
+        fake.enabled.load(Ordering::Acquire),
+        "the position after the complete // marker must restore the saved IME state"
+    );
+
+    // 6. End of the comment line: still comment content — keep the IME on.
+    move_cursor_to(&mut app, doc_id, view_id, comment, comment.len())?;
+    assert!(
+        fake.enabled.load(Ordering::Acquire),
+        "the end-of-line cursor is still inside the comment and must keep the IME on"
+    );
+
+    // 7. Leaving the comment for code: close again.
+    move_cursor_to(&mut app, doc_id, view_id, "99", 0)?;
+    assert!(
+        !fake.enabled.load(Ordering::Acquire),
+        "back in code the IME must close"
+    );
+
+    Ok(())
+}
+
+/// Boundary precision for `//!` inner doc comments: every position after the
+/// leading `//` is comment content, so moving from `this` back over the `!`
+/// must not close the IME, while moving before the first `/` must.
+#[cfg(not(target_os = "windows"))]
+#[tokio::test(flavor = "multi_thread")]
+async fn test_cursor_move_inner_doc_comment_boundaries() -> anyhow::Result<()> {
+    let fake = FakeImePlatform::available_and(true);
+    let _ime_env = ime_test_env_with(fake.clone());
+
+    let mut app = Application::new(
+        Args::default(),
+        ime_test_config(),
+        test_syntax_loader(None),
+        WorkspaceTrust::fully_trusted(),
+    )?;
+
+    let view_id = app.editor.tree.focus;
+    let doc_comment =
+        "//! this module provides the functionality to insert the paired closing character.";
+    let doc_id = overwrite_document_text(
+        &mut app,
+        view_id,
+        &format!("fn demo() {{\n    {doc_comment}\n    let code = 99;\n}}\n"),
+    );
+    let loader = app.editor.syn_loader.load();
+    {
+        let doc = app.editor.documents.get_mut(&doc_id).unwrap();
+        doc.set_language_by_language_id("rust", &loader)?;
+    }
+
+    app.editor.mode = Mode::Insert;
+
+    // 1. Content (`this`): sensitive region, no saved state — no auto-enable.
+    move_cursor_to(&mut app, doc_id, view_id, "this", 0)?;
+    assert!(
+        !fake.enabled.load(Ordering::Acquire),
+        "entering the doc comment with no saved state must not enable the IME"
+    );
+
+    // 2. The user enables the IME themselves.
+    fake.enabled.store(true, Ordering::Release);
+
+    // 3. Code region: save the user's state and close.
+    move_cursor_to(&mut app, doc_id, view_id, "99", 0)?;
+    assert!(
+        !fake.enabled.load(Ordering::Acquire),
+        "code region must disable the platform IME"
+    );
+
+    // 4. Before `this` (after `//! `): comment content — restore.
+    move_cursor_to(&mut app, doc_id, view_id, doc_comment, 4)?;
+    assert!(
+        fake.enabled.load(Ordering::Acquire),
+        "returning into the doc comment must restore the saved IME state"
+    );
+
+    // 5. After the `!`: still comment content — must stay on.
+    move_cursor_to(&mut app, doc_id, view_id, doc_comment, 3)?;
+    assert!(
+        fake.enabled.load(Ordering::Acquire),
+        "the position right after the ! of //! is still comment content"
+    );
+
+    // 6. Right after the second `/`: still comment content.
+    move_cursor_to(&mut app, doc_id, view_id, doc_comment, 2)?;
+    assert!(
+        fake.enabled.load(Ordering::Acquire),
+        "every position after the leading // of //! is comment content"
+    );
+
+    // 7. Before the first `/`: code again — close.
+    move_cursor_to(&mut app, doc_id, view_id, doc_comment, 0)?;
+    assert!(
+        !fake.enabled.load(Ordering::Acquire),
+        "the position before the // marker is code and must close the IME"
+    );
+
+    // 8. End of line: back inside the comment — restore.
+    move_cursor_to(&mut app, doc_id, view_id, doc_comment, doc_comment.len())?;
+    assert!(
+        fake.enabled.load(Ordering::Acquire),
+        "the end-of-line cursor is still inside the doc comment"
     );
 
     Ok(())
