@@ -605,8 +605,18 @@ impl Application {
     where
         S: Stream<Item = std::io::Result<TerminalEvent>> + Unpin,
     {
-        let mut priority_events = VecDeque::new();
-        let mut normal_events = VecDeque::new();
+        // Buffered-scroll interruption only applies while scrolling is actually
+        // in progress (a scroll command ran recently). Keys are classified
+        // against the *current* mode, which is only meaningful mid-scroll: in a
+        // general batch the meaning of a key depends on the events queued
+        // before it, not the mode at capture time (e.g. a literal `k` typed as
+        // insert-mode text while the batch is captured behind an open
+        // command-line prompt would otherwise classify as `move_line_up`).
+        let scrolling_active = self
+            .last_interruptible_scroll_at
+            .is_some_and(|at| at.elapsed() <= RECENT_SCROLL_ESCAPE_WINDOW);
+
+        let mut normal_events: VecDeque<std::io::Result<TerminalEvent>> = VecDeque::new();
         let mut cancel_scrolling = false;
         let mut captured = 0;
 
@@ -616,11 +626,35 @@ impl Application {
             };
             captured += 1;
 
+            if !scrolling_active {
+                normal_events.push_back(next_event);
+                continue;
+            }
+
             match next_event {
                 Ok(event) if Self::is_escape_key_event(&event) => {
+                    // Cancel in-flight buffered scrolling: drop the scroll
+                    // events captured so far (and any already pending) so
+                    // scrolling stops at Esc. The Esc itself keeps its place
+                    // in the queue — reordering it ahead of non-scroll keys
+                    // typed before it would, for example, exit insert mode
+                    // before those keys run (`ihello world<esc>`).
                     cancel_scrolling = true;
                     self.clear_pending_interruptible_scroll_events();
-                    priority_events.push_back(Ok(event));
+                    let mut retained: VecDeque<std::io::Result<TerminalEvent>> =
+                        VecDeque::with_capacity(normal_events.len());
+                    while let Some(event) = normal_events.pop_front() {
+                        let is_interruptible_scroll = event
+                            .as_ref()
+                            .ok()
+                            .and_then(|event| self.interruptible_scroll_event(event))
+                            .is_some();
+                        if !is_interruptible_scroll {
+                            retained.push_back(event);
+                        }
+                    }
+                    normal_events = retained;
+                    normal_events.push_back(Ok(event));
                 }
                 Ok(event) if self.interruptible_scroll_event(&event).is_some() => {
                     if !cancel_scrolling {
@@ -631,9 +665,6 @@ impl Application {
             }
         }
 
-        while let Some(event) = priority_events.pop_back() {
-            self.pending_terminal_events.push_front(event);
-        }
         while let Some(event) = normal_events.pop_front() {
             self.pending_terminal_events.push_back(event);
         }
