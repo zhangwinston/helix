@@ -32,7 +32,7 @@ use std::sync::{Arc, LazyLock};
 /// `Send` (unlike `std::sync`'s), which the `#[tokio::test]` futures require.
 static IME_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
-fn ime_test_lock() -> MutexGuard<'static, ()> {
+pub(super) fn ime_test_lock() -> MutexGuard<'static, ()> {
     IME_TEST_LOCK.lock()
 }
 
@@ -42,7 +42,7 @@ use helix_term::handlers::ime::platform::testing::{install_platform, FakeImePlat
 /// platform installed, restoring the real OS controller on drop. Without this,
 /// tests on a desktop with a live fcitx/ibus would toggle the developer's real
 /// input method, and outcomes would depend on each machine's IME setup.
-struct ImeTestEnv {
+pub(super) struct ImeTestEnv {
     _guard: MutexGuard<'static, ()>,
 }
 
@@ -52,7 +52,7 @@ impl Drop for ImeTestEnv {
     }
 }
 
-fn ime_test_env_with(fake: Arc<FakeImePlatform>) -> ImeTestEnv {
+pub(super) fn ime_test_env_with(fake: Arc<FakeImePlatform>) -> ImeTestEnv {
     let env = ImeTestEnv {
         _guard: IME_TEST_LOCK.lock(),
     };
@@ -62,14 +62,14 @@ fn ime_test_env_with(fake: Arc<FakeImePlatform>) -> ImeTestEnv {
 
 /// Locks the tests and installs the default fake: an available IME, currently
 /// disabled, whose platform calls always succeed.
-fn ime_test_env() -> ImeTestEnv {
+pub(super) fn ime_test_env() -> ImeTestEnv {
     ime_test_env_with(FakeImePlatform::available_and(false))
 }
 
 /// Test config with IME auto-control re-enabled: `test_config()` disables it
 /// (see `test_editor_config`) because the IME globals are process-wide, but
 /// these tests exercise exactly that machinery.
-fn ime_test_config() -> helix_term::config::Config {
+pub(super) fn ime_test_config() -> helix_term::config::Config {
     let mut config = test_config();
     config.editor.ime_auto_control = true;
     config
@@ -84,7 +84,7 @@ fn get_ime_context(
     helix_term::handlers::ime::registry::context(doc_id, view_id)
 }
 
-fn overwrite_document_text(
+pub(super) fn overwrite_document_text(
     app: &mut Application,
     view_id: helix_view::ViewId,
     text: &str,

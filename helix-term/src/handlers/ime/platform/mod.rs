@@ -78,6 +78,10 @@ impl ImeDetector {
             ImeType::Sogou
         } else if name_lower.contains("microsoft") || name_lower.contains("ms") {
             ImeType::Microsoft
+        } else if name_lower.contains("tencent") || name_lower.contains("qq") {
+            // Must be checked before the generic "pinyin" pattern below so
+            // e.g. "QQ Pinyin" is not misdetected as GooglePinyin.
+            ImeType::Tencent
         } else if name_lower.contains("google") || name_lower.contains("pinyin") {
             ImeType::GooglePinyin
         } else if name_lower.contains("fcitx") {
@@ -86,8 +90,6 @@ impl ImeDetector {
             ImeType::IBus
         } else if name_lower.contains("baidu") {
             ImeType::Baidu
-        } else if name_lower.contains("tencent") || name_lower.contains("qq") {
-            ImeType::Tencent
         } else if name_lower.contains("scim") {
             ImeType::SCIM
         } else {

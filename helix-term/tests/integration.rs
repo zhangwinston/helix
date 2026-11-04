@@ -19,6 +19,10 @@ mod test {
     mod command_line;
     mod commands;
     mod ime;
+    mod ime_improvements;
+    mod ime_improvements_simple;
+    mod ime_performance;
+    mod ime_platform_tests;
     mod movement;
     mod splits;
 }
